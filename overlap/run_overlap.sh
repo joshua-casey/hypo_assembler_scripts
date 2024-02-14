@@ -4,6 +4,7 @@ usage (){
 echo "  -k <solids>    the list of solid kmers in bitvector format                                     [          required ]"
 echo "  -i <contigs>   the contigs to join in fasta format                                         [          required ]"
 echo "  -l <reads>     the long reads to map as verification                                       [          required ]"
+echo "  -b <aligns>    long reads alignment to contigs, to filter reads                            [ default:     none ]"
 echo "  -t <threads>   the number of threads to use.                                               [ default:        1 ]"
 echo "  -o <prefix>    prefix for outputs                                                          [ default:   overlap ]"
 echo "  -T <tempdir>   directory to store intermediate files                                       [ default:    temp/ ]"
@@ -23,6 +24,7 @@ longreads=""
 readtype="ont"
 sortmem="1G"
 kmerlen="17"
+aligns=""
 while getopts ":k:i:t:fT:o:l:pm:h" opt; do
   case $opt in
     k)
@@ -36,6 +38,9 @@ while getopts ":k:i:t:fT:o:l:pm:h" opt; do
         ;;
     f)
         filter="1"
+        ;;
+    b)
+        aligns="$OPTARG"
         ;;
     T)
         tempdir="$OPTARG"
@@ -99,13 +104,26 @@ echo "[STEP 2] Joining overlaps"
 echo "python join.py $contigs $tempdir/overlap.txt $tempdir/intermediate.fa $tempdir/obj.pkl"
 python join_overlap.py $contigs $tempdir/overlap.txt $tempdir/intermediate.fa $tempdir/obj.pkl $tempdir > $tempdir/identity.txt
 
-echo "[STEP 3] Mapping long reads"
-echo "minimap2 -ax map-$readtype -t $threads $tempdir/intermediate.fa $longreads | samtools view -bS > $tempdir/map.bam"
-minimap2 -I 64G -ax map-$readtype -t $threads $tempdir/intermediate.fa $longreads | samtools view -bS > $tempdir/map.bam
-echo "samtools sort -@ $threads -o $tempdir/map.sorted.bam $tempdir/map.bam"
-samtools sort -@ $threads -m $sortmem -o $tempdir/map.sorted.bam $tempdir/map.bam
-echo "samtools index -@ $threads $tempdir/map.sorted.bam"
-samtools index -@ $threads $tempdir/map.sorted.bam
+if [ "$aligns" == "" ]; then
+    echo "Alignments not provided; Skipping Step 3: Filtering long reads to remap"
+    echo "[STEP 4] Mapping long reads"
+    echo "minimap2 -ax map-$readtype -t $threads $tempdir/intermediate.fa $longreads | samtools view -bS > $tempdir/map.bam"
+    minimap2 -I 64G -ax map-$readtype -t $threads $tempdir/intermediate.fa $longreads | samtools view -bS > $tempdir/map.bam
+    echo "samtools sort -@ $threads -o $tempdir/map.sorted.bam $tempdir/map.bam"
+    samtools sort -@ $threads -m $sortmem -o $tempdir/map.sorted.bam $tempdir/map.bam
+    echo "samtools index -@ $threads $tempdir/map.sorted.bam"
+    samtools index -@ $threads $tempdir/map.sorted.bam
+else
+    echo "[STEP 3] Filtering long reads by previous alignment"
+    python filter_alignments.py $aligns $tempdir/filtered_reads.fa
+    echo "[STEP 4] Mapping long reads"
+    echo "minimap2 -ax map-$readtype -t $threads $tempdir/intermediate.fa $tempdir/filtered_reads.fa | samtools view -bS > $tempdir/map.bam"
+    minimap2 -I 64G -ax map-$readtype -t $threads $tempdir/intermediate.fa $tempdir/filtered_reads.fa | samtools view -bS > $tempdir/map.bam
+    echo "samtools sort -@ $threads -o $tempdir/map.sorted.bam $tempdir/map.bam"
+    samtools sort -@ $threads -m $sortmem -o $tempdir/map.sorted.bam $tempdir/map.bam
+    echo "samtools index -@ $threads $tempdir/map.sorted.bam"
+    samtools index -@ $threads $tempdir/map.sorted.bam
+fi
 
 echo "[STEP 4] Finalization"
 echo "python filter.py $tempdir/obj.pkl $tempdir/map.sorted.bam $prefix"

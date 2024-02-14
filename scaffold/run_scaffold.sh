@@ -93,12 +93,12 @@ echo "Using $sortmem memory on samtools sort."
 echo "Output: $prefix.fa"
 
 echo "[STEP 1] Finding scaffolds"
-echo "./find_overlap $solids $contigs $threads $filter > $tempdir/overlap.txt"
-./find_scaffold $kmerlen $solids $contigs $threads $filter > $tempdir/overlap.txt
+echo "./find_scaffold $solids $contigs $threads $filter > $tempdir/scaffold.txt"
+./find_scaffold $kmerlen $solids $contigs $threads $filter > $tempdir/scaffold.txt
 
 echo "[STEP 2] Joining scaffolds"
-echo "python join.py $contigs $tempdir/overlap.txt $tempdir/intermediate.fa $tempdir/obj.pkl"
-python join_scaffold.py $contigs $tempdir/overlap.txt $tempdir/intermediate.fa $tempdir/obj.pkl $tempdir > $tempdir/identity.txt
+echo "python join.py $contigs $tempdir/scaffold.txt $tempdir/intermediate.fa $tempdir/obj.pkl"
+python join_scaffold.py $contigs $tempdir/scaffold.txt $tempdir/intermediate.fa $tempdir/obj.pkl $tempdir > $tempdir/identity.txt
 
 echo "[STEP 3] Mapping long reads"
 echo "minimap2 -ax map-$readtype -t $threads $tempdir/intermediate.fa $longreads | samtools view -bS > $tempdir/map.bam"
@@ -111,6 +111,6 @@ samtools index -@ $threads $tempdir/map.sorted.bam
 echo "[STEP 4] Finalization"
 echo "python filter.py $tempdir/obj.pkl $tempdir/map.sorted.bam $prefix"
 prefix="scaffold_1"
-python filter_scaffold.py $tempdir/obj.pkl $tempdir/map.sorted.bam $prefix
+python filter_scaffold.py $tempdir/obj.pkl $tempdir/map.sorted.bam $prefix 1
 prefix="scaffold_2"
-python filter_scaffold.py $tempdir/obj.pkl $tempdir/map.sorted.bam $prefix
+python filter_scaffold.py $tempdir/obj.pkl $tempdir/map.sorted.bam $prefix 2
