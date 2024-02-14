@@ -1,0 +1,9 @@
+inputs/
+outputs/
+suk/build/
+polisher/build/
+scaffold/build/
+overlap/build/
+overlap/temp/
+run/
+run_all/
