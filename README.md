@@ -18,13 +18,13 @@
 Compile C++ scripts on overlap/ and scaffold/:
 1. mkdir build
 2. cd build
-3. cmake ..
+3. cmake .. -DCMAKE_BUILD_TYPE=Release
 4. make
 5. Put the resulting binary (i.e. find_overlap and find_scaffold) in base directory (i.e. overlap/ and scaffold/)
     i.e. cp find_overlap ../ and cp find_scaffold ../
 Build hypo polisher
 1. mkdir build
-2. cmake ..
+2. cmake .. -DCMAKE_BUILD_TYPE=Release
 3. make
 4. Executable will be in build/bin/hypo
 
