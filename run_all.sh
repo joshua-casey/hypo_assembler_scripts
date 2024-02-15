@@ -2,7 +2,7 @@
 
 usage (){
 echo "  -1 <reads_1>        short read pair 1                               [          required ]"
-echo "  -i <reads_2>        short read pair 2                               [          required ]"
+echo "  -2 <reads_2>        short read pair 2                               [          required ]"
 echo "  -l <long_reads>     long reads file                                 [          required ]"
 echo "  -d <draft>          draft assembly                                  [          required ]"
 echo "  -B <long_read_map>  mapping of long reads to draft                  [ default:      none]"
@@ -20,7 +20,8 @@ draft=""
 threads="1"
 sortmem="10G"
 kmerlen="17"
-while getopts ":k:i:t:fT:o:l:pm:h" opt; do
+tempdir="temp/"
+while getopts "1:2:l:d:B:t:T:h" opt; do
   case $opt in
     1)
         reads1="$OPTARG"
@@ -84,38 +85,32 @@ echo "Using $threads threads"
 echo "Using $tempdir as temporary directory."
 mkdir -p $tempdir
 
-cp suk $tempdir
-cp hypo $tempdir
-cp run_overlap.sh $tempdir
-cp run_scaffold.sh $tempdir
-cd $tempdir
-
 if [ "$longbam" == "" ]; then
     echo "Mapping long reads to draft"
-    minimap2 -ax map-ont -t 40 $draft $longreads | samtools view -bS | samtools sort -@ $threads -m $sortmem -o long_align.bam
+    minimap2 -ax map-ont -t 40 $draft $longreads | samtools view -bS | samtools sort -@ $threads -m $sortmem -o $tempdir/long_align.bam
 else
-    echo "Long mapping: $longbam"
-    ln -s $longbam long_align.bam
+    echo "Long read mapping: $longbam"
+    ln -s $longbam $tempdir/long_align.bam
 fi
 
 echo "[STEP 1] Getting solid kmers"
-echo $reads1 > shorts.txt
-echo $reads2 >> shorts.txt
-./suk -k 17 -i @shorts.txt -t 40 -e
-cd ..
+echo $reads1 > $tempdir/shorts.txt
+echo $reads2 >> $tempdir/shorts.txt
+./suk -k 17 -i @"$tempdir"/shorts.txt -t 40 -e
+mv SUK_k17.bv $tempdir/SUK_k17.bv
 
 echo "[STEP 2] Scanning misjoin"
-python scan_misjoin.py $draft long_align.bam misjoin.fa
+python scan_misjoin.py $draft $tempdir/long_align.bam $tempdir/misjoin.fa
 
 echo "[STEP 3] Finding overlaps"
-./run_overlap.sh -k SUK_k17.bv -i misjoin.fa -l $longreads -t $threads -o overlap -T overlap_temp
+./run_overlap.sh -k $tempdir/SUK_k17.bv -i $tempdir/misjoin.fa -l $longreads -t $threads -o $tempdir/overlap -T $tempdir/overlap_temp
 
 echo "[STEP 4] Realignment for polishing"
-minimap2 -I 64G -ax map-ont -t 40 overlap.fa $longreads | samtools view -bS | samtools sort -@ 10 -m 10G -o overlap_long.bam
-minimap2 -I 64G -ax sr -t 40 overlap.fa $reads1 $reads2 | samtools view -bS | samtools sort -@ 10 -m 10G -o overlap_short.bam
+minimap2 -I 64G -ax map-ont -t 40 $tempdir/overlap.fa $longreads | samtools view -bS | samtools sort -@ 10 -m 10G -o $tempdir/overlap_long.bam
+minimap2 -I 64G -ax sr -t 40 $tempdir/overlap.fa $reads1 $reads2 | samtools view -bS | samtools sort -@ 10 -m 10G -o $tempdir/overlap_short.bam
 
 echo "[STEP 5] Polishing"
-./hypo -d $tempdir/overlap.fa -s 3g -B overlap_long.bam -C 60 -b overlap_short.bam -r @shorts.txt -c 100 -t $threads
+./hypo -d $tempdir/overlap.fa -s 3g -B $tempdir/overlap_long.bam -C 60 -b $tempdir/overlap_short.bam -r @"$tempdir"/shorts.txt -c 100 -t $threads -w $tempdir/hypo_wdir -o $tempdir/polished.fa
 
 echo "[STEP 6] Scaffolding"
-./run.sh -k SUK_k17.bv -i hypo_overlap.fa -l l.fq.gz -t 40
+./run_scaffold.sh -k $tempdir/SUK_k17.bv -i $tempdir/polished.fa -l l.fq.gz -t 40 -o $tempdir/scaffold

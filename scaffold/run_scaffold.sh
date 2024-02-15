@@ -92,15 +92,15 @@ mkdir -p $tempdir
 echo "Using $sortmem memory on samtools sort."
 echo "Output: $prefix.fa"
 
-echo "[STEP 1] Finding scaffolds"
+echo "[SCAFFOLD: STEP 1] Finding scaffolds"
 echo "./find_scaffold $solids $contigs $threads $filter > $tempdir/scaffold.txt"
 ./find_scaffold $kmerlen $solids $contigs $threads $filter > $tempdir/scaffold.txt
 
-echo "[STEP 2] Joining scaffolds"
+echo "[SCAFFOLD: STEP 2] Joining scaffolds"
 echo "python join.py $contigs $tempdir/scaffold.txt $tempdir/intermediate.fa $tempdir/obj.pkl"
 python join_scaffold.py $contigs $tempdir/scaffold.txt $tempdir/intermediate.fa $tempdir/obj.pkl $tempdir > $tempdir/identity.txt
 
-echo "[STEP 3] Mapping long reads"
+echo "[SCAFFOLD: STEP 3] Mapping long reads"
 echo "minimap2 -ax map-$readtype -t $threads $tempdir/intermediate.fa $longreads | samtools view -bS > $tempdir/map.bam"
 minimap2 -I 64G -ax map-$readtype -t $threads $tempdir/intermediate.fa $longreads | samtools view -bS > $tempdir/map.bam
 echo "samtools sort -@ $threads -o $tempdir/map.sorted.bam $tempdir/map.bam"
@@ -108,7 +108,7 @@ samtools sort -@ $threads -m $sortmem -o $tempdir/map.sorted.bam $tempdir/map.ba
 echo "samtools index -@ $threads $tempdir/map.sorted.bam"
 samtools index -@ $threads $tempdir/map.sorted.bam
 
-echo "[STEP 4] Finalization"
+echo "[SCAFFOLD: STEP 4] Finalization"
 echo "python filter.py $tempdir/obj.pkl $tempdir/map.sorted.bam $prefix"
 prefix="scaffold_1"
 python filter_scaffold.py $tempdir/obj.pkl $tempdir/map.sorted.bam $prefix 1

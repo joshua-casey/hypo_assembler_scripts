@@ -25,7 +25,7 @@ readtype="ont"
 sortmem="1G"
 kmerlen="17"
 aligns=""
-while getopts ":k:i:t:fT:o:l:pm:h" opt; do
+while getopts ":k:i:t:fb:T:o:l:pm:h" opt; do
   case $opt in
     k)
         solids="$OPTARG"
@@ -96,17 +96,17 @@ mkdir -p $tempdir
 echo "Using $sortmem memory on samtools sort."
 echo "Output: $prefix.fa"
 
-echo "[STEP 1] Finding overlaps"
+echo "[OVERLAP: STEP 1] Finding overlaps"
 echo "./find_overlap $solids $contigs $threads $filter > $tempdir/overlap.txt"
 ./find_overlap $kmerlen $solids $contigs $threads $filter > $tempdir/overlap.txt
 
-echo "[STEP 2] Joining overlaps"
+echo "[OVERLAP: STEP 2] Joining overlaps"
 echo "python join.py $contigs $tempdir/overlap.txt $tempdir/intermediate.fa $tempdir/obj.pkl"
 python join_overlap.py $contigs $tempdir/overlap.txt $tempdir/intermediate.fa $tempdir/obj.pkl $tempdir > $tempdir/identity.txt
 
 if [ "$aligns" == "" ]; then
     echo "Alignments not provided; Skipping Step 3: Filtering long reads to remap"
-    echo "[STEP 4] Mapping long reads"
+    echo "[OVERLAP: STEP 4] Mapping long reads"
     echo "minimap2 -ax map-$readtype -t $threads $tempdir/intermediate.fa $longreads | samtools view -bS > $tempdir/map.bam"
     minimap2 -I 64G -ax map-$readtype -t $threads $tempdir/intermediate.fa $longreads | samtools view -bS > $tempdir/map.bam
     echo "samtools sort -@ $threads -o $tempdir/map.sorted.bam $tempdir/map.bam"
@@ -114,9 +114,9 @@ if [ "$aligns" == "" ]; then
     echo "samtools index -@ $threads $tempdir/map.sorted.bam"
     samtools index -@ $threads $tempdir/map.sorted.bam
 else
-    echo "[STEP 3] Filtering long reads by previous alignment"
+    echo "[OVERLAP: STEP 3] Filtering long reads by previous alignment"
     python filter_alignments.py $aligns $tempdir/filtered_reads.fa
-    echo "[STEP 4] Mapping long reads"
+    echo "[OVERLAP: STEP 4] Mapping long reads"
     echo "minimap2 -ax map-$readtype -t $threads $tempdir/intermediate.fa $tempdir/filtered_reads.fa | samtools view -bS > $tempdir/map.bam"
     minimap2 -I 64G -ax map-$readtype -t $threads $tempdir/intermediate.fa $tempdir/filtered_reads.fa | samtools view -bS > $tempdir/map.bam
     echo "samtools sort -@ $threads -o $tempdir/map.sorted.bam $tempdir/map.bam"
@@ -125,6 +125,6 @@ else
     samtools index -@ $threads $tempdir/map.sorted.bam
 fi
 
-echo "[STEP 4] Finalization"
+echo "[OVERLAP: STEP 5] Finalization"
 echo "python filter.py $tempdir/obj.pkl $tempdir/map.sorted.bam $prefix"
 python filter_overlap.py $tempdir/obj.pkl $tempdir/map.sorted.bam $prefix
