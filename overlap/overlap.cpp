@@ -188,6 +188,9 @@ int main(int argc, char* argv[]) {
         cerr << "Usage: " << argv[0] << " <k> <kmers bitvector> <contigs fasta> <optional: thread count (default=1)> <optional: remove >2 occurence solid kmers (1/0) (default=0)>" << endl;
         return 1;
     }
+    cerr << "Command: ";
+    for(int i = 0; i < argc; i++) cerr << argv[i] << " ";
+    cerr << endl;
     
     
     int thread_count = 1;

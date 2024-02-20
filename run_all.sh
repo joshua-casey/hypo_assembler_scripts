@@ -100,14 +100,14 @@ echo $reads2 >> $tempdir/shorts.txt
 mv SUK_k17.bv $tempdir/SUK_k17.bv
 
 echo "[STEP 2] Scanning misjoin"
-python scan_misjoin.py $draft $tempdir/long_align.bam $tempdir/misjoin.fa
+./find_misjoin $draft $tempdir/long_align.bam $tempdir/misjoin.fa
 
 echo "[STEP 3] Finding overlaps"
 ./run_overlap.sh -k $tempdir/SUK_k17.bv -i $tempdir/misjoin.fa -l $longreads -t $threads -o $tempdir/overlap -T $tempdir/overlap_temp
 
 echo "[STEP 4] Realignment for polishing"
-minimap2 -I 64G -ax map-ont -t 40 $tempdir/overlap.fa $longreads | samtools view -bS | samtools sort -@ 10 -m 10G -o $tempdir/overlap_long.bam
-minimap2 -I 64G -ax sr -t 40 $tempdir/overlap.fa $reads1 $reads2 | samtools view -bS | samtools sort -@ 10 -m 10G -o $tempdir/overlap_short.bam
+minimap2 -I 64G -ax map-ont -t $threads $tempdir/overlap.fa $longreads | samtools view -bS | samtools sort -@ 10 -m 10G -o $tempdir/overlap_long.bam
+minimap2 -I 64G -ax sr -t $threads $tempdir/overlap.fa $reads1 $reads2 | samtools view -bS | samtools sort -@ 10 -m 10G -o $tempdir/overlap_short.bam
 
 echo "[STEP 5] Polishing"
 ./hypo -d $tempdir/overlap.fa -s 3g -B $tempdir/overlap_long.bam -C 60 -b $tempdir/overlap_short.bam -r @"$tempdir"/shorts.txt -c 100 -t $threads -w $tempdir/hypo_wdir -o $tempdir/polished.fa

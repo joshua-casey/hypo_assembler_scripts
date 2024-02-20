@@ -8,6 +8,17 @@ make -j 10
 make
 cd ../..
 
+echo "Building misjoin"
+cd misjoin
+./install_deps.sh
+mkdir -p build
+cd build
+rm -r *
+cmake .. -DCMAKE_BUILD_TYPE=Release
+make -j 10
+make
+cd ..
+
 echo "Building overlap"
 cd overlap
 ./install_deps.sh
@@ -43,7 +54,7 @@ cd ../..
 
 mkdir -p run_all
 cp run_all.sh run_all/
-cp scan_misjoin.py run_all/
+cp misjoin/build/find_misjoin run_all/
 cp suk/build/bin/suk run_all/
 cp overlap/run_overlap.sh run_all/
 cp overlap/join_overlap.py run_all/

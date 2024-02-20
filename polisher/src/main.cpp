@@ -603,6 +603,11 @@ void set_kind(const std::string& kind) {
 
 int main(int argc, char **argv) {
     
+  
+    fprintf(stdout, "Command: ");
+    for(int i = 0; i < argc; i++) fprintf(stdout, "%s ", argv[i]);
+    fprintf(stdout, "\n");  
+      
   slog::Monitor monitor;
   /* Decode arguments */
   hypo::InputFlags flags;
