@@ -108,11 +108,8 @@ public:
 	friend class PackedSeq<2>;
 
 	inline bool is_valid() {return _valid;}
-	inline void clear() {_data.clear();}
 	// Unpacks the whole sequence
     inline std::string unpack() const {return unpack(0,get_seq_size());}
-	// Unpacks the sequence  from left_ind(inclusive) 
-    inline std::string unpack(const size_t left_ind) const {return unpack(left_ind,get_seq_size());}
 	// Unpacks the sequence from left_ind(inclusive) to right_ind(exclusive)
 	std::string unpack(const size_t left_ind, const size_t right_ind) const;
 	// Mutiply (data_size-1) bytes to number of bases in a byte; Add remainder
@@ -125,13 +122,13 @@ public:
 	inline BYTE enc_base_at(size_t ind) const {assert(ind < get_seq_size()); return BYTE(_data[ind >> _ind_shift] >> (_bit_shift[ind & _mod_mask])) &  byte_mask;}
 	inline BYTE base_at(size_t ind) const {return cCode[enc_base_at(ind)];}
 
-	/** Finds the position (closest to the expected_pos) of the given kmer in the given range, if any
+	/** Finds the first/last position of the given kmer in the given range, if any
 	 *  Range: left_ind(inclusive) to right_ind(exclusive)
-	 *  expected_pos: position where the kmer is expected; pos closest to this will be returned; if a tie, left/right will be chosen based on is_first set/unset.
+	 * 	First if is_first is set; otherwise last
 	 *  Stores index in result, if found
 	 *  Returns whether found or not
 	 * */
-	bool find_kmer(const UINT64 target_kmer, const UINT k, const size_t left_ind, const size_t right_ind, const size_t expected_pos, const bool is_first, size_t& result) const;
+	bool find_kmer(const UINT64 target_kmer, const UINT k, const size_t left_ind, const size_t right_ind, const bool is_first, size_t& result) const;
 
 	/** Checks whether the kmer at the given position is same as the given kmer
 	 *  Returns whether same or not

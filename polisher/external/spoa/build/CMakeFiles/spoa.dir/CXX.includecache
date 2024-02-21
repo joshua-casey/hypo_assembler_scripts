@@ -1,4 +1,4 @@
-#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+#IncludeRegexLine: ^[ 	]*#[ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
 
 #IncludeRegexScan: ^.*$
 
@@ -31,48 +31,34 @@ utility
 -
 unordered_set
 -
-set
--
-iostream
--
-queue
--
 
-/home/ritu/hypo_test/hypo/external/spoa/src/alignment_engine.cpp
+/home/ritu/consensus_semiglobal/vendor/spoa/src/alignment_engine.cpp
 limits
--
-iostream
 -
 algorithm
 -
 exception
 -
 sisd_alignment_engine.hpp
-/home/ritu/hypo_test/hypo/external/spoa/src/sisd_alignment_engine.hpp
+/home/ritu/consensus_semiglobal/vendor/spoa/src/sisd_alignment_engine.hpp
 simd_alignment_engine.hpp
-/home/ritu/hypo_test/hypo/external/spoa/src/simd_alignment_engine.hpp
+/home/ritu/consensus_semiglobal/vendor/spoa/src/simd_alignment_engine.hpp
 spoa/alignment_engine.hpp
-/home/ritu/hypo_test/hypo/external/spoa/src/spoa/alignment_engine.hpp
+/home/ritu/consensus_semiglobal/vendor/spoa/src/spoa/alignment_engine.hpp
 
-/home/ritu/hypo_test/hypo/external/spoa/src/graph.cpp
+/home/ritu/consensus_semiglobal/vendor/spoa/src/graph.cpp
 assert.h
--
-iostream
 -
 algorithm
 -
 stack
 -
-set
--
-map
--
 fstream
 -
 spoa/graph.hpp
-/home/ritu/hypo_test/hypo/external/spoa/src/spoa/graph.hpp
+/home/ritu/consensus_semiglobal/vendor/spoa/src/spoa/graph.hpp
 
-/home/ritu/hypo_test/hypo/external/spoa/src/simd_alignment_engine.cpp
+/home/ritu/consensus_semiglobal/vendor/spoa/src/simd_alignment_engine.cpp
 iostream
 -
 algorithm
@@ -82,11 +68,11 @@ limits
 immintrin.h
 -
 spoa/graph.hpp
-/home/ritu/hypo_test/hypo/external/spoa/src/spoa/graph.hpp
+/home/ritu/consensus_semiglobal/vendor/spoa/src/spoa/graph.hpp
 simd_alignment_engine.hpp
-/home/ritu/hypo_test/hypo/external/spoa/src/simd_alignment_engine.hpp
+/home/ritu/consensus_semiglobal/vendor/spoa/src/simd_alignment_engine.hpp
 
-/home/ritu/hypo_test/hypo/external/spoa/src/simd_alignment_engine.hpp
+/home/ritu/consensus_semiglobal/vendor/spoa/src/simd_alignment_engine.hpp
 cstdint
 -
 memory
@@ -96,21 +82,19 @@ string
 vector
 -
 spoa/alignment_engine.hpp
-/home/ritu/hypo_test/hypo/external/spoa/src/spoa/alignment_engine.hpp
+/home/ritu/consensus_semiglobal/vendor/spoa/src/spoa/alignment_engine.hpp
 
-/home/ritu/hypo_test/hypo/external/spoa/src/sisd_alignment_engine.cpp
+/home/ritu/consensus_semiglobal/vendor/spoa/src/sisd_alignment_engine.cpp
 limits
--
-iostream
 -
 algorithm
 -
 spoa/graph.hpp
-/home/ritu/hypo_test/hypo/external/spoa/src/spoa/graph.hpp
+/home/ritu/consensus_semiglobal/vendor/spoa/src/spoa/graph.hpp
 sisd_alignment_engine.hpp
-/home/ritu/hypo_test/hypo/external/spoa/src/sisd_alignment_engine.hpp
+/home/ritu/consensus_semiglobal/vendor/spoa/src/sisd_alignment_engine.hpp
 
-/home/ritu/hypo_test/hypo/external/spoa/src/sisd_alignment_engine.hpp
+/home/ritu/consensus_semiglobal/vendor/spoa/src/sisd_alignment_engine.hpp
 cstdint
 -
 memory
@@ -120,5 +104,5 @@ string
 vector
 -
 spoa/alignment_engine.hpp
-/home/ritu/hypo_test/hypo/external/spoa/src/spoa/alignment_engine.hpp
+/home/ritu/consensus_semiglobal/vendor/spoa/src/spoa/alignment_engine.hpp
 

@@ -55,45 +55,42 @@ namespace hypo{
   using INT64 = int64_t;
   using UINT64 = uint64_t;
 
-  #define VERSION 2.0
+  using ScoreParams = struct SScoreParams{
+    INT8 sr_match_score;
+    INT8 sr_misMatch_score;
+    INT8 sr_gap_penalty; // must be negative
+    INT8 lr_match_score;
+    INT8 lr_misMatch_score;
+    INT8 lr_gap_penalty; // must be negative
 
-  enum Mode{
-  LSA, // Long read polishing with short read alignment on the contigs given
-  LO, // Only long reads polishing
-  SO, // Only short reads polishing
-  SECOND // Second round in LSA
   };
 
   using InputFlags = struct SInputFlags{
-    UINT8 map_qual_th; // mapping_qual_th
-    UINT8 norm_edit_th; // normalised edit distance threshold for long reads
-    UINT32 threads;
-    UINT32 processing_batch_size;
-    UINT16 k;
-    UINT16 sz_in_gb;
-    UINT done_stage;
-    Mode mode;
-    // whether intermediate results should be used and stored to disk; 
-    // if false, neither intermed files will be written nor used (even if exist)
-    bool intermed; 
-    std::string wdir; //working directory
-
-  };
-
-using FileNames = struct SFileNames{
     std::vector<std::string> sr_filenames;
     std::string sr_bam_filename;
     std::string lr_bam_filename;
     std::string draft_filename;
     std::string output_filename;
-    };
+    ScoreParams score_params;
+    UINT8 map_qual_th; // mapping_qual_th
+    UINT64 norm_edit_th; // normalised edit distance threshold for long reads
+    UINT32 threads;
+    UINT32 processing_batch_size;
+    UINT16 k;
+    UINT16 cov;
+    UINT16 cov_long;
+    UINT16 sz_in_gb;
+    UINT done_stage;
+    // whether intermediate results should be used and stored to disk; 
+    // if false, neither intermed files will be written nor used (even if exist)
+    bool intermed; 
 
+  };
 
   // Stages
   #define STAGE_BEG 0u
-  #define STAGE_SK 3u
-  #define STAGE_FIRST 1u
-  #define STAGE_REMAP 2u
+  #define STAGE_SK 1u
+  #define STAGE_SP 2u
 
   // Region types (Needed by Contig and Alignment Classes)
   enum class RegionType: UINT8 {
@@ -108,26 +105,16 @@ using FileNames = struct SFileNames{
       OTHER,
       LONG,
       SR,
-      MSR, // Minimser is same as SR (no polishing)
-      PSEUDO,
-      NOPOL, // NoPolishnig in this window; consensus same as the draft
-      INVALID, // No polishing in this window;consensus is empty string
-      LI // Consensus by prefix-suffix
+      MSR // Minimser is same as SR (no polishing)
   };
-  
   
 
   // Folders and files
   #define AUX_DIR  "aux/"
-  #define SR_DIR "aux/SR/"
   #define SKFILE "aux/solid_kmers.bvsd"
   #define STAGEFILE "aux/stage.txt"
   #define INSPECTFILEPREF "aux/inspect_"
   #define BEDFILE "aux/regions.bed"
-  #define SBAMFILE "aux/mapped-sr2.bam"
-
-
-
 
   // SR related settings
   using SRSettings = struct SSRSettings{
@@ -157,23 +144,6 @@ using FileNames = struct SFileNames{
   };
   extern WindowSettings Window_settings;
 
-  // Window-coverage related settings (set according to param)
-  using WindowCovSettings = struct SWindowCovSettings{
-    UINT16 mean_cov;  // Mean coverage of short reads
-    double high_frac; // fraction for deciding upper-cutoff to classify window as high-coverage [high_th = high_frac*mean_cov]
-    double low_frac; // fraction for deciding lower-cutoff to classify window as lower-coverage [low_th = low_frac*mean_cov]
-    UINT16 high_th; // if cov > (high_th)*mean_cov, it is high
-    UINT16 low_th; // if cov < (low_th)*mean_cov, it is low
-  };
-  extern WindowCovSettings SWindow_cov_settings; // Short window
-  extern WindowCovSettings LWindow_cov_settings; // Long window
-  
-  using FilteringSettings = struct SFilteringSettings{
-      double clip_ratio; // filter out reads only if it has (total clip / aligned length) > this threshold
-      UINT32 contig_end_leniency; // clips around contig_end_leniency is not considered
-  };
-  extern FilteringSettings Filtering_settings;
-
   // Arm-filling realted settings
   using ArmsSettings = struct SArmsSettings{
     UINT min_short_num; // Minimum num of short-reads arms for a window to be declared short
@@ -183,10 +153,6 @@ using FileNames = struct SFileNames{
     UINT min_contrib; // Minimum num of arms for a short-arms window to be considered for discarding pref/suff arms
     double min_internal_contrib; // Minimum fraction of internal arms (wrt total arms) for a short-arms window to discard pref/suff arms
     UINT short_arm_coef; // Short arm len should be >= window_len/coefficient
-    UINT long_arm_min_len; // Minimum Long arm len
-    UINT base_qual_th; // threshold for base quality to be considered as high quality
-    UINT allowed_num_lq_bases; // number of bases which are allowed to be of low qualilty in an arm (used for Short armonly)
-    double lq_frac_th; // threshold of what fraction of internal arms containing low qual bases are tolerated
   };
   extern const ArmsSettings Arms_settings;
 
@@ -212,12 +178,11 @@ const BYTE cNt4Table[256] = {
         4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4
 };
   
-enum Stage{
-  SK, // solid kmer
-  SP // solid pos
+  enum Stage{
+    SK, // solid kmer
+    SP // solid pos
 
-    };
-
+      };
 } // end namespace
 
 

@@ -82,15 +82,11 @@ bool SolidKmers::initialise(const std::vector<std::string> & filenames, const UI
     std::string kmc_output_path = tmp_directory + "/kmc_result.res";
     // create the temp file for filenames
     std::string kmc_inputs_path = tmp_directory + "/inputs.txt";
-    
-    
     std::ofstream ofs(kmc_inputs_path.c_str());
     for(auto & i : filenames) {
         ofs << i << "\n";
     }
     ofs.close();
-    
-    
     kmc_inputs_path = "@" + kmc_inputs_path;
     
     std::string file_type = "-fq";
@@ -152,11 +148,7 @@ bool SolidKmers::initialise(const std::vector<std::string> & filenames, const UI
     while (kmc_database.ReadNextKmer(*kmer_object, counter)) {
         if(counter <= cHIST_FREQ) histArray[counter]++;
     }
-    monitor.stop("[SUK:KMC]: Kmers Histogram done. ");
-    
-    //std::ofstream of("/home/joshuac/ecoli_k12_mg1655/kmer_hist.txt");
-    //for(int i=0; i< cHIST_FREQ; i++) of << i << "\t" << histArray[i] << "\n";
-    //of.close();     
+    monitor.stop("[SUK:KMC]: Kmers Histogram done. ");     
     
     /* Find cut offs */
     //monitor.start();
@@ -362,14 +354,10 @@ CutOffs SolidKmers::find_cutoffs(const std::vector<size_t> & histArray) {
             }
         }
     }
-    
-    //coffs.err = 200;
-    //coffs.lower = 200;
-    //coffs.upper = 1500;
-    //coffs.mean = 960;
+
+
     fprintf(stdout, "[SolidKmers] Info: Error-threshold freq: %u, Lower-threshold freq: %u, Upper-threshold freq: %u, Mean-coverage: %u\n",coffs.err,coffs.lower,coffs.upper,coffs.mean); 
-    
-    
+
     return coffs;
     
 }

@@ -27,18 +27,17 @@
 
 namespace hypo
 {
-    Mode Contig::_mode = Mode::LSA;
+    bool Contig::_no_long_reads = false;
     Contig::Contig(const UINT32 id, const std::string& name, const std::string seq): 
     _id(id), _name(name), _len(seq.size()), _pseq(seq), _solid_pos(seq.size(),0), _reg_pos(seq.size()+1,0), 
-    _numSR(0), _lenSR(0), _num_wind(0) {_reg_pos[0]=1; _reg_pos[_len]=1;}
+    _pseudo_reg_pos(0), _numSR(0), _lenSR(0) {}
     
     Contig::Contig(const UINT32 id, const kseq_t * ks): 
     _id(id), _name(std::string(ks->name.s,ks->name.l)), _len(ks->seq.l), _pseq(ks) , _solid_pos(ks->seq.l,0), 
-    _reg_pos(ks->seq.l+1,0), _numSR(0), _lenSR(0), _num_wind(0) {_reg_pos[0]=1; _reg_pos[_len]=1;}
+    _reg_pos(ks->seq.l+1,0), _pseudo_reg_pos(0), _numSR(0), _lenSR(0) {}
     
 
     void Contig::find_solid_pos(const std::unique_ptr<suk::SolidKmers>& pSK) {
-        const UINT16 cv = Sr_settings.cov_th+1;
         const UINT k = pSK->get_k();
         UINT64 kmer=0;
         UINT kmer_len=0;
@@ -66,35 +65,31 @@ namespace hypo
                 }
                 if (should_add) {
                     _solid_pos[beg_pos]=1;
-                    if (Contig::_mode==Mode::LSA) { // Artificially fill in coverage and support of solid kmers so that SO/SECOND code can be used to find SR
-                        _kmerinfo.emplace_back(std::make_unique<KmerInfo>(kmer,cv,cv));
-                    }
-                    else {
-                        _kmerinfo.emplace_back(std::make_unique<KmerInfo>(kmer));
-                    }
+                    _kmerinfo.emplace_back(std::make_unique<KmerInfo>(kmer));
                 }                
             }
         }
         sdsl::util::init_support(_Rsolid_pos,&_solid_pos);
         sdsl::util::init_support(_Ssolid_pos,&_solid_pos);
     }
-
-    void Contig::prepare_for_division(const UINT k, const std::string wdir) {        
+    void Contig::prepare_for_division(const UINT k) {
+        
         ///////////////////////////////////////////////////////
         /* Find SR */
+        auto num_sk = _kmerinfo.size();
         std::vector<UINT32> sr_pos;
         std::vector<UINT32> sr_len;
-        
-        auto num_sk = _kmerinfo.size();
         _anchor_kmers.reserve(2*num_sk);
         // 0th index has dummy
         _anchor_kmers.push_back(0);
         sr_pos.reserve(num_sk);
         sr_len.reserve(num_sk);
-        std::vector<UINT32> kinds;
-        std::vector<UINT32> sr_poss;
-        UINT32 last_sr_pos = 0;
+        UINT32 last_kind = 0;
+        UINT32 first_kind = 0;
+        UINT64 last_sr_pos=0;
+        UINT64 first_sr_pos=0;
         bool in_sr = false;
+        bool pvs_80 = true; // so that first 0.4 gets accepted
         UINT i = 0;
         for (UINT pos=0; pos < _solid_pos.size(); ++pos) {
             if (_solid_pos[pos]==1) { // kmer
@@ -102,149 +97,109 @@ namespace hypo
                 bool is_valid =false;
                 if (_kmerinfo[i]->coverage >=Sr_settings.cov_th) {
                     UINT supp_th = UINT(Sr_settings.supp_frac * _kmerinfo[i]->coverage);
-                    if  (_kmerinfo[i]->support >= (supp_th)) { // this kmer has >=80% support; supported by both haplotypes
+                    if  (_kmerinfo[i]->support >= (2*supp_th)) { // this kmer has >=80% support; ; supported by one haplotypes
                         is_valid = true;
+                        pvs_80 = true;
+                    }
+                    else if (_kmerinfo[i]->support >= supp_th) { // this kmer has between 40% to 80% support; supported by one haplotypes
+                        if (pvs_80) { // add only if pvs kmer was present in both
+                            is_valid = true;
+                        }
+                        pvs_80 = false;
                     }
                 }		
-                if (is_valid) { // valid will either be the first or ctd of sr                    
+                if (is_valid) { // valid will either be the first or ctd of sr
+                    
                     if (!in_sr) { // first kmer of sr
-                        kinds.clear();
-                        sr_poss.clear();
+                        first_kind = i;
+                        first_sr_pos = pos;
                         in_sr = true;
                     }
-                    kinds.emplace_back(i);
-                    sr_poss.emplace_back(pos);
+                    last_kind = i;
                     last_sr_pos = pos+k; // 1 past last pos covered
                 }
                 ++i;
             }
 
-            // Add if reached the end of sr; Add until the second last (effectively removes the last kmer)
+            // Add if reached the end of sr
             if (in_sr && pos==last_sr_pos) {
-                auto first_sr_pos = sr_poss[0];
-                if (Contig::_mode!=Mode::LSA || last_sr_pos>(first_sr_pos+MIN_SR_LEN_LSA)) {
-                    sr_pos.emplace_back(first_sr_pos);
-                    sr_len.emplace_back(last_sr_pos-first_sr_pos);
-                    _anchor_kmers.emplace_back((_kmerinfo[kinds[0]]->kid));
-                    _anchor_kmers.emplace_back((_kmerinfo[kinds[kinds.size()-1]]->kid));                        
-                }
-                in_sr=false;             
+                sr_pos.emplace_back(first_sr_pos);
+                sr_len.emplace_back(last_sr_pos-first_sr_pos);
+                _anchor_kmers.emplace_back((_kmerinfo[first_kind]->kid));
+                _anchor_kmers.emplace_back((_kmerinfo[last_kind]->kid));
+                in_sr=false;
+                pvs_80 = true;
             }                                
         }
         if (in_sr) { // add the last SR (if not already added)
-            auto first_sr_pos = sr_poss[0];
-            if (Contig::_mode!=Mode::LSA || last_sr_pos>(first_sr_pos+MIN_SR_LEN_LSA)) {
-                sr_pos.emplace_back(first_sr_pos);
-                sr_len.emplace_back(last_sr_pos-first_sr_pos);
-                _anchor_kmers.emplace_back((_kmerinfo[kinds[0]]->kid));
-                _anchor_kmers.emplace_back((_kmerinfo[kinds[kinds.size()-1]]->kid));                         
-            }
+            sr_pos.emplace_back(first_sr_pos);
+            sr_len.emplace_back(last_sr_pos-first_sr_pos);
+            _anchor_kmers.emplace_back((_kmerinfo[first_kind]->kid));
+            _anchor_kmers.emplace_back((_kmerinfo[last_kind]->kid));
         }
-        // Free solid_pos and supporting DSas they are not needed any longer
+        // Free solid_pos and kmer_info as they are not needed any longer
         _kmerinfo.clear();
         _kmerinfo.shrink_to_fit();
         sdsl::util::clear(_solid_pos);
         sdsl::util::clear(_Rsolid_pos);
         sdsl::util::clear(_Ssolid_pos);
         _anchor_kmers.shrink_to_fit();
-    
+
         // Set the number and the length of SRs 
         _numSR = sr_pos.size();
         _lenSR = std::accumulate(sr_len.begin(), sr_len.end(), 0);
         ///////////////////////////////////////////////////////
-        /* Divide contig into SR and MegaWindows */
-        _is_win_even = !(_numSR > 0 && sr_pos[0]==0);    
+        /* Divide contig into SR and MW */
+        _is_win_even = !(_numSR > 0 && sr_pos[0]==0);
+        _minimserinfo.reserve(_numSR+1);
         _reg_pos[0]=1;
         // dummy
         auto contig_len = _len;
         UINT32 dummy_sr_pos = UINT32(contig_len);
         sr_pos.emplace_back(dummy_sr_pos);
         _reg_pos[dummy_sr_pos]=1;
-
-        // Handle window after each SR
-        for (UINT32 ind=0; ind < _numSR; ++ind) {
+        // handle 0th window
+        UINT32 windex = 0;
+        if (_is_win_even) {
+            _minimserinfo.emplace_back(std::make_unique<MWMinimiserInfo>());
+            UINT32 mw_len = sr_pos[0];
+            if (mw_len>Window_settings.ideal_swind_size) {
+                initialise_minimserinfo(_pseq.unpack(0,sr_pos[0]), 0);
+            }
+            ++windex;         
+        }
+        // Handle window after each srvg
+        for (UINT32 ind=0; ind < _numSR; ++ind,++windex) {
             _reg_pos[sr_pos[ind]]=1;
             UINT32 mw_start = sr_pos[ind]+sr_len[ind];
-            _reg_pos[mw_start]=1;           
+            _reg_pos[mw_start]=1;
+            _minimserinfo.emplace_back(std::make_unique<MWMinimiserInfo>());
+            UINT32 mw_len = sr_pos[ind+1]-mw_start;
+            std::string draft_seq ();
+            if (mw_len>Window_settings.ideal_swind_size) {
+                initialise_minimserinfo(_pseq.unpack(mw_start,sr_pos[ind+1]), windex);
+            } 
         }
-        //////////////////////////////////////////////////////
-        /* Minimiser set-up */
-        if (Contig::_mode==Mode::SECOND|| Contig::_mode==Mode::SO) {
-            _minimserinfo.reserve(_numSR+1);  
-            // handle 0th window
-            UINT32 windex = 0;
-            if (_is_win_even) {            
-                UINT32 mw_len = sr_pos[0];
-                _minimserinfo.emplace_back(std::make_unique<MWMinimiserInfo>());
-                if (mw_len>Window_settings.ideal_swind_size) {
-                    initialise_minimserinfo(_pseq.unpack(0,sr_pos[0]), 0);
-                }
-                ++windex;    
-            }
-            for (UINT32 ind=0; ind < _numSR; ++ind,++windex) {               
-                _minimserinfo.emplace_back(std::make_unique<MWMinimiserInfo>());
-                UINT32 mw_start = sr_pos[ind]+sr_len[ind];
-                UINT32 mw_len = sr_pos[ind+1]-mw_start;
-                if (mw_len>Window_settings.ideal_swind_size) {
-                    initialise_minimserinfo(_pseq.unpack(mw_start,sr_pos[ind+1]), windex);
-                }            
-            }
-            sdsl::util::init_support(_RMreg_pos,&_reg_pos);
-            sdsl::util::init_support(_SMreg_pos,&_reg_pos);
-        }
+        sdsl::util::init_support(_RMreg_pos,&_reg_pos);
+        sdsl::util::init_support(_SMreg_pos,&_reg_pos);
     }
 
-    
-
     void Contig::divide_into_regions() {
-        auto contig_len = _len;
-        auto mode = Contig::_mode;
+        auto contig_len = _pseq.get_seq_size();
         UINT32 sr_rank = 1; // rank of the first SR in contigs (i.e. 1) + number of window-type so that 0th SR
         // process region at the beginning of the next one (works because dummy at the end)
         UINT32 reg_start = 0;
         UINT32 reg_ind = 0;
-        UINT32 li_ind = 0;
-        bool look_for_gap = ((mode==Mode::LSA || mode==Mode::LO) && _gap_li.size()>0) ;
-        UINT32 gb = 0;
-        UINT32 ge = 0;
-        if (look_for_gap) {
-            gb = std::get<0>(_gap_li[0]);
-            ge = std::get<1>(_gap_li[0]);
-        }
-        const UINT32 cToo_large = 2*Window_settings.ideal_swind_size;
         for (size_t i=1; i < contig_len+1; ++i) {
             if (_reg_pos[i]==1) {
                 UINT32 reg_end = i;
                 // MW
                 if ((_is_win_even && reg_ind%2==0) || (!_is_win_even && reg_ind%2==1)) {
-                    if (mode==Mode::LO || mode==Mode::LSA) {
-                        // This MW may have one or more LI
-                        while (look_for_gap && gb>=reg_start && ge<=reg_end) {
-                            if (gb>reg_start) {fixed_divide(reg_start,gb);}
-                            //gap-li
-                            std::cout << _name << " Invalidated LI "<< gb<<"-"<<ge<<std::endl;
-                            _reg_pos[gb] =1; //it's redundant;                 
-                            _reg_info.emplace_back(0);
-                            _reg_type.emplace_back(RegionType::INVALID);
-                            reg_start = ge;
-                            ++li_ind;
-                            if (li_ind < _gap_li.size()) {
-                                gb = std::get<0>(_gap_li[li_ind]);
-                                ge = std::get<1>(_gap_li[li_ind]);
-                            }
-                            else {look_for_gap=false;}
-                        }                      
-                        
-                        // This function fills in the pos, info, type
-                        fixed_divide(reg_start,reg_end);
-                    }
-                    else { // SO/SECOND
-                        // next will be sr if this is not the last; pvs will be sr if this is not 0
-                        char pvs = (reg_ind==0) ? ('n') : ('s');
-                        char nxt = (i==contig_len) ? ('n') : ('s');
-                        // This function fills in the pos, info, type
-                        divide(reg_ind,reg_start,reg_end,pvs,nxt);
-                    }
+                    // next will be sr if this is not the last; pvs will be sr if this is not 0
+                    char pvs = (reg_ind==0) ? ('n') : ('s');
+                    char nxt = (i==contig_len) ? ('n') : ('s');
+                    // This function fills in the pos, info, type
+                    divide(reg_ind,reg_start,reg_end,pvs,nxt);
                 }
                 else { // SR
                     _reg_info.emplace_back(sr_rank);
@@ -265,81 +220,126 @@ namespace hypo
         // Include dummy
         _reg_type.emplace_back(RegionType::SR);
 
-        if (mode==Mode::LO|| mode==Mode::LSA) {
-            auto num_reg = _reg_info.size()+1; // 0th is nullptr
-            _lcovinfo.reserve(num_reg);
-            _lcovinfo.emplace_back(std::unique_ptr<LCovInfo>());
-            _plwindows.reserve(num_reg); 
-            _plwindows.emplace_back(std::unique_ptr<Window>());
-        }
-        else {// SO/SECOND
-            // Free memory
-            _minimserinfo.clear();
-            _minimserinfo.shrink_to_fit();
-            sdsl::util::clear(_RMreg_pos);
-            sdsl::util::clear(_SMreg_pos);
-
-            // Window pointers
-            _pswindows.reserve(_num_wind+1); // 0th is nullptr
-            _pswindows.emplace_back(std::unique_ptr<Window>());
-            _scovinfo.reserve(_num_wind+1);
-            _scovinfo.emplace_back(std::unique_ptr<SCovInfo>());
-        }
-        
+        // Free memory
+        _minimserinfo.clear();
+        _minimserinfo.shrink_to_fit();
+        sdsl::util::clear(_RMreg_pos);
+        sdsl::util::clear(_SMreg_pos);
 
         // Initialise Rank-Select
         sdsl::util::init_support(_Rreg_pos,&_reg_pos);
         sdsl::util::init_support(_Sreg_pos,&_reg_pos);
         // Assign Window pointers
+        _pwindows.reserve(_reg_type.size()); // Add nullptr
         for (size_t i=0; i < _reg_type.size();++i) {
-            if (_reg_type[i] != RegionType::SR && _reg_type[i] != RegionType::MSR && _reg_type[i] != RegionType::INVALID) { // a valid window
-                if (mode==Mode::LO || mode==Mode::LSA) {
-                    _plwindows.emplace_back(std::make_unique<Window>(_pseq,_Sreg_pos(i+1),_Sreg_pos(i+2),WindowType::LONG));
-                    _lcovinfo.emplace_back(std::make_unique<LCovInfo>());
-                }
-                else { //SO/SECOND                   
-                    _pswindows.emplace_back(std::make_unique<Window>(_pseq,_Sreg_pos(i+1),_Sreg_pos(i+2),WindowType::SHORT));
-                    _scovinfo.emplace_back(std::make_unique<SCovInfo>());
-                }
+            if (_reg_type[i] == RegionType::SR || _reg_type[i] == RegionType::MSR) { // an SR 
+                _pwindows.emplace_back(std::unique_ptr<Window>()); // Add nullptr
             }
-        }
+            else { //window
+                _pwindows.emplace_back(std::make_unique<Window>(_pseq,_Sreg_pos(i+1),_Sreg_pos(i+2),WindowType::SHORT));
+            }
+        }        
+        _pwindows.shrink_to_fit();
         _reg_type.shrink_to_fit();
         _reg_info.shrink_to_fit();
     }
 
     
     // This will destroy alignments after use. 
-    void Contig::prune_short_windows() {
+    void Contig::fill_short_windows(std::vector<std::unique_ptr<Alignment>>& alignments) {
         ///////////////////////////////////////////////////////
+        /* Fill Short Windows */
+        for (UINT i=0; i < alignments.size();++i) {
+            alignments[i]->add_arms(*this);
+            alignments[i].reset();
+        }
         // Free memeory
         _anchor_kmers.clear();
         _anchor_kmers.shrink_to_fit();
+        _reg_info.clear();
+        _reg_info.shrink_to_fit();
 
         ///////////////////////////////////////////////////////
         /* Prune Short Windows */
-        UINT MIN_SHORT_NUM = Arms_settings.min_short_num;
-        UINT MIN_CONTRIB = Arms_settings.min_contrib;
-        double MIN_INTERNAL_CONTRIB = Arms_settings.min_internal_contrib;
-        UINT NUM1 = Arms_settings.min_internal_num1;
-        UINT NUM2 = Arms_settings.min_internal_num2;
-
-        for (size_t i = 0; i < _reg_type.size(); ++i) {   
-            if (Contig::_mode==Mode::SO || Contig::_mode==Mode::SECOND) { // prune all windows in SO/Second   ; redundant; will be calledonly while filling short
-                if (_reg_type[i] !=  RegionType::SR && _reg_type[i] !=  RegionType::MSR) { // a short window  
-                    UINT32 pi = _reg_info[i];
-                    UINT64 internal_contrib = _pswindows[pi]->get_num_internal();
-                    UINT64 contrib = _pswindows[pi]->get_num_total(); 
-                    bool cond0 = internal_contrib > NUM1;
-                    bool cond1 = contrib >=MIN_CONTRIB && (internal_contrib >= std::floor(MIN_INTERNAL_CONTRIB*contrib));
-                    if (!_pswindows[pi]->has_low_qual_internal()) { // Use only internal arms wherever possible;   
-                        bool cond2 = (_reg_type[i]==RegionType::SWS || _reg_type[i]==RegionType::SW || _reg_type[i]==RegionType::WS || _reg_type[i]==RegionType::MWS || _reg_type[i]==RegionType::SWM) && (internal_contrib >= NUM2);
-                        if (cond0 || cond1 || cond2) { // get rid of pre/suf arms
-                            _pswindows[pi]->set_internal_only();
-                        }                        
+        for (size_t i = 0; i < _reg_type.size(); ++i) {
+            if (_reg_type[i] !=  RegionType::SR && _reg_type[i] !=  RegionType::MSR && _pwindows[i]) { // a window with short arms  
+                bool is_discarded = false;
+                UINT64 internal_contrib = _pwindows[i]->get_num_internal();
+                if (internal_contrib < Arms_settings.min_short_num) { // not suffcient internal arms; empty is also an internal
+                    UINT32 win_len = _Sreg_pos(i+2)-_Sreg_pos(i+1); // works because last is dummy SR
+                    bool is_covered = ((_pwindows[i]->get_maxlen_pre()) +(_pwindows[i]->get_maxlen_suf()) >= win_len);
+                    bool suffcient_pre_suff = ((_pwindows[i]->get_num_pre() >= Arms_settings.min_short_num) && (_pwindows[i]->get_num_suf() >= Arms_settings.min_short_num));
+                    if (!(is_covered && suffcient_pre_suff)) { // discard this window
+                        _pwindows[i].reset();
+                        is_discarded = true;
+                    }                    
+                }
+                
+                if (!is_discarded) { // Use only internal arms wherever possible; free some space                    
+                    UINT64 contrib = _pwindows[i]->get_num_total(); 
+                    bool cond0 = internal_contrib > Arms_settings.min_internal_num1;
+                    bool cond1 = contrib >=Arms_settings.min_contrib && (internal_contrib >= std::floor(Arms_settings.min_internal_contrib*contrib));
+                    bool cond2 = (_reg_type[i]==RegionType::SWS || _reg_type[i]==RegionType::SW || _reg_type[i]==RegionType::WS || _reg_type[i]==RegionType::MWS || _reg_type[i]==RegionType::SWM) && (internal_contrib >= Arms_settings.min_internal_num2);
+                    if (cond0 || cond1 || cond2) { // get rid of pre/suf arms
+                        _pwindows[i]->clear_pre_suf();
                     }
                 }
             }
-        }        
+        }
+    }
+
+    // This will destroy alignments after use. 
+    void Contig::prepare_long_windows() {
+        ///////////////////////////////////////////////////////
+        /* Merge smaller windows into larger ones */
+        auto contig_len = _len;
+        _pseudo_reg_pos = std::move(sdsl::bit_vector(contig_len+1,0));
+        // pseudo_reg_type contains LONG for windows and SR for pseudo-SR       
+        size_t num_reg = _reg_type.size(); // including the dummy
+        _pseudo_reg_type.reserve(num_reg);
+        _true_reg_id.reserve(num_reg);
+        bool pvs_iswin = true;
+        UINT32 curr_pseudowin_len = 0;
+        // This loop will also include dummy SR
+        for (UINT32 i=0; i<num_reg; ++i) {
+            auto pos = _Sreg_pos(i+1);
+            if (_reg_type[i] == RegionType::SR || _reg_type[i] == RegionType::MSR || _pwindows[i]) { // an SR or a valid (short) window; => pseudo-SR
+                if (pvs_iswin || (i==num_reg-1)) { // first pseudo-SR after window or the dummy
+                    _pseudo_reg_pos[pos] =1;
+                    _pseudo_reg_type.emplace_back(RegionType::SR);
+                    _true_reg_id.emplace_back(i);
+                    curr_pseudowin_len = 0;
+                }
+                pvs_iswin = false;
+            }
+            else { // a window with no short arms
+                UINT32 winlen = _Sreg_pos(i+2)-pos;
+                if ((pos==0) || (curr_pseudowin_len+winlen>Window_settings.ideal_lwind_size) || (!pvs_iswin) ) { // start new pwin : winsize exceeds or win after SR 
+                    _pseudo_reg_pos[pos]=1;
+                    _pseudo_reg_type.emplace_back(RegionType::LONG);
+                    _true_reg_id.emplace_back(i);
+                    _reg_type[i] = RegionType::LONG;
+                    curr_pseudowin_len = winlen;                    
+                }
+                else { // continue in the pvs pwin
+                    curr_pseudowin_len += winlen;
+                }
+                pvs_iswin = true;
+            }
+        }
+        _pseudo_reg_type.shrink_to_fit();
+        _true_reg_id.shrink_to_fit();
+
+        // Prepare rank select support
+        sdsl::util::init_support(_pseudo_Rreg_pos,&_pseudo_reg_pos);
+        sdsl::util::init_support(_pseudo_Sreg_pos,&_pseudo_reg_pos);
+        // Assign Window pointers
+        for (size_t i=0; i < _pseudo_reg_type.size()-1;++i) { // excluding dummy
+            if (_pseudo_reg_type[i] ==RegionType::LONG) {
+                _pwindows[_true_reg_id[i]] = std::make_unique<Window>(_pseq,_pseudo_Sreg_pos(i+1),_pseudo_Sreg_pos(i+2),WindowType::LONG);
+            }
+        }
+        // At this point, each region is either SR (with nullptr as window ptr and the next region as valid window); Or short/long window with valid window ptr
     }
 
     std::ostream &operator<<(std::ostream &os, const Contig &ctg) {
@@ -353,20 +353,11 @@ namespace hypo
             if (ctg._reg_type[i] == RegionType::SR || ctg._reg_type[i] == RegionType::MSR) { // an SR
                 os << ctg._pseq.unpack(curr,next);
             }
-            else if (ctg._reg_type[i] == RegionType::INVALID) { // window can be invalid only in LSA mode
-                ; // Do nothing                
+            else if (ctg._pwindows[i]) { // not a nullptr; a valid window
+                os << (ctg._pwindows[i])->get_consensus();
             }
-            else if (ctg._reg_type[i] == RegionType::LONG || ctg._reg_type[i] == RegionType::PSEUDO) { // a long window
-                auto pi = ctg._reg_info[i];
-                os << (ctg._plwindows[pi])->get_consensus();
-            }
-            else if (ctg._reg_type[i] == RegionType::LI) { // a long ins window
-                auto pi = ctg._reg_info[i];
-                os << (ctg._pliwindows[pi])->get_consensus();
-            }
-            else { // a valid short window
-                auto pi = ctg._reg_info[i];
-                os << (ctg._pswindows[pi])->get_consensus();
+            else if (Contig::_no_long_reads) { // a window with nullptr; (invalid if long reads used; no-mapping if only short reads)
+                os << ctg._pseq.unpack(curr,next);
             }
             curr = next;
         }
@@ -374,10 +365,8 @@ namespace hypo
         return os;
     }
 
-    void Contig::generate_inspect_file(std::string wdir, std::ofstream& bedfile) {
-        std::string suf = ".txt";
-        if (Contig::_mode==Mode::LSA){suf=".0.txt";}
-        std::string fn(wdir+INSPECTFILEPREF+_name+suf);
+    void Contig::generate_inspect_file(std::ofstream& bedfile) {
+        std::string fn(INSPECTFILEPREF+_name+".txt");
         std::ofstream ofs(fn);
         if (!ofs.is_open()) {
             fprintf(stderr, "[Hypo::Contig] Error: File open error: Inspection File (%s) could not be opened!\n",fn.c_str());
@@ -420,20 +409,8 @@ namespace hypo
                 case RegionType::OTHER: 
                     short_type = "OTH";
                     break;
-                case RegionType::INVALID: 
-                    short_type = "INV";
-                    break;
-                case RegionType::NOPOL: 
-                    short_type = "NPL";
-                    break;
                 case RegionType::LONG: 
                     short_type = "LNG";
-                    break;
-                 case RegionType::PSEUDO: 
-                    short_type = "PSD";
-                    break;
-                case RegionType::LI: 
-                    short_type = "LI";
                     break;
                 case RegionType::SR: 
                     short_type = "SR";
@@ -456,34 +433,19 @@ namespace hypo
                 ofs << "++\t" <<  draft <<std::endl;
                 bedfile << _name << "\t" << curr << "\t" << next << "\t" << get_reg_type(_reg_type[i]) << std::endl;
             }
-            else if (_reg_type[i] == RegionType::INVALID) { // no-mapping short window (nopol can be only if long reads not used)
-                    ofs << "==========(" << curr << "-" <<  next-1 << ")\t";
-                    ofs << get_reg_type(_reg_type[i]) << "\t" << 0 << "\t" << 0 << "\t" << 0 << "\t" << 0 << std::endl;
-                    std::string draft(_pseq.unpack(curr,next));
-                    ofs << "++\t" << draft << std::endl;
-                    ofs << "++\t" <<  std::endl;
-                    bedfile << _name << "\t" << curr << "\t" <<curr+1 << "\t" <<  get_reg_type(_reg_type[i]) << std::endl;
-            }
-            else if (_reg_type[i] == RegionType::LONG || _reg_type[i] == RegionType::PSEUDO) { // a long window
-                auto pi = _reg_info[i];
-                ofs << "==========(" << curr << "-" <<  curr+_plwindows[pi]->get_window_len()-1 << ")\t";
+            else if (_pwindows[i]) { // not a nullptr; a valid window
+                ofs << "==========(" << curr << "-" <<  curr+_pwindows[i]->get_window_len()-1 << ")\t";
                 ofs << get_reg_type(_reg_type[i])<<"\t";
-                ofs << *(_plwindows[pi]);
+                ofs << *(_pwindows[i]);
                 bedfile << _name << "\t" << curr << "\t" << curr+1 << "\t" <<  get_reg_type(_reg_type[i]) << std::endl;
             }
-            else if (_reg_type[i] == RegionType::LI) { // a long window
-                auto pi = _reg_info[i];
-                ofs << "==========(" << curr << "-" <<  curr+_pliwindows[pi]->get_window_len()-1 << ")\t";
-                ofs << get_reg_type(_reg_type[i])<<"\t";
-                ofs << *(_pliwindows[pi]);
-                bedfile << _name << "\t" << curr << "\t" << curr+1 << "\t" <<  get_reg_type(_reg_type[i]) << std::endl;
-            }
-            else { // a valid short window
-                auto pi = _reg_info[i];
-                ofs << "==========(" << curr << "-" <<  curr+_pswindows[pi]->get_window_len()-1 << ")\t";
-                ofs << get_reg_type(_reg_type[i])<<"\t";
-                ofs << *(_pswindows[pi]);
-                bedfile << _name << "\t" << curr << "\t" << curr+1 << "\t" <<  get_reg_type(_reg_type[i]) << std::endl;
+            else if (Contig::_no_long_reads) { // a window with nullptr; (invalid if long reads used; no-mapping if only short reads)
+                ofs << "==========(" << curr << "-" <<  next-1 << ")\t";
+                ofs << get_reg_type(_reg_type[i]) << "\t" << 0 << "\t" << 0 << "\t" << 0 << "\t" << 0 << std::endl;
+                std::string draft(_pseq.unpack(curr,next));
+                ofs << "++\t" <<  draft <<std::endl;
+                ofs << "++\t" <<  draft <<std::endl;
+                bedfile << _name << "\t" << curr << "\t" <<curr+1 << "\t" <<  get_reg_type(_reg_type[i]) << std::endl;
             }
             curr = next;
         }
@@ -495,7 +457,7 @@ namespace hypo
         UINT32 last_found_position = draft_seq.size() + 1; //a unique identifier for 'first minimizer'
         UINT32 MINIMIZER_K = Minimizer_settings.k;
         UINT32 MINIMIZER_W = Minimizer_settings.w;
-        //UINT32 shift = 2 * (Minimizer_settings.k - 1);
+        UINT32 shift = 2 * (Minimizer_settings.k - 1);
         UINT32 mask = (1ULL<<2*MINIMIZER_K) - 1;
         UINT32 kmer[2] = {0,0};
         MinimizerDeque<UINT32> minimizer_window(MINIMIZER_W + 1);
@@ -547,8 +509,7 @@ namespace hypo
             if(counter[found_minimizers[i]] == 1) { //unique minimizer
                 UINT32 p = found_minimizers_positions[i];
                 //if (draft_seq[p]!=draft_seq[p+1] && draft_seq[p+MINIMIZER_K-1]!=draft_seq[p+MINIMIZER_K-2]) { // doesn't have HP at terminals
-                //if (found_minimizers[i]!=Minimizer_settings.polyA && found_minimizers[i]!=Minimizer_settings.polyC && found_minimizers[i]!=Minimizer_settings.polyG && found_minimizers[i]!=Minimizer_settings.polyT) {
-                if (!is_periodic(draft_seq.substr(p,MINIMIZER_K))){    
+                if (found_minimizers[i]!=Minimizer_settings.polyA && found_minimizers[i]!=Minimizer_settings.polyC && found_minimizers[i]!=Minimizer_settings.polyG && found_minimizers[i]!=Minimizer_settings.polyT) {
                     _minimserinfo[minfoind]->minimisers.push_back(found_minimizers[i]);
                     _minimserinfo[minfoind]->rel_pos.push_back(p - last_found_position);                    
                     last_found_position = found_minimizers_positions[i];
@@ -563,8 +524,8 @@ namespace hypo
     }
         
     void Contig::divide(const UINT32 reg_index, const UINT32 beg, const UINT32 end, char pvs, char nxt) { 
-        const UINT32 IDEAL_WIND_SIZE =  Window_settings.ideal_swind_size;
-        const UINT32 MINIMIZER_K = Minimizer_settings.k;
+        UINT32 IDEAL_WIND_SIZE =  Window_settings.ideal_swind_size;
+        UINT32 MINIMIZER_K = Minimizer_settings.k;
         const UINT32 cToo_large = 2*IDEAL_WIND_SIZE;     
         //// Collect supported minimisers 
         
@@ -575,7 +536,7 @@ namespace hypo
         supp_pos.reserve(num_minimsers);
         std::vector<UINT32> supp_minimisers;
         supp_minimisers.reserve(num_minimsers);
-
+        
         for (UINT32 mi=0; mi< num_minimsers; ++mi) {
             minimiser_pos += _minimserinfo[minfoidx]->rel_pos[mi]; // absolute pos
             if (_minimserinfo[minfoidx]->coverage[mi]>=Minimizer_settings.cov_th) { 
@@ -607,9 +568,8 @@ namespace hypo
                 force_divide(beg,end,pvs,nxt);
             }
             else {
-                ++_num_wind;
-                _reg_pos[beg] =1; //it's redundant;                 
-                _reg_info.emplace_back(_num_wind);
+                _reg_pos[beg] =1; //it's redundant; 
+                _reg_info.emplace_back(0);
                 if (pvs=='s' && nxt=='s') {_reg_type.emplace_back(RegionType::SWS);}
                 else if (pvs=='s') {_reg_type.emplace_back(RegionType::SW);}
                 else if (nxt=='s') {_reg_type.emplace_back(RegionType::WS);}
@@ -623,9 +583,8 @@ namespace hypo
                 force_divide(beg,win_end,pvs,'m');
             }
             else {
-                ++_num_wind;
                 _reg_pos[beg] =1; //it's redundant; 
-                _reg_info.emplace_back(_num_wind);
+                _reg_info.emplace_back(0);
                 if (pvs=='s') {_reg_type.emplace_back(RegionType::SWM);}
                 else {_reg_type.emplace_back(RegionType::WM);}
             }
@@ -643,9 +602,8 @@ namespace hypo
                     force_divide(win_start,win_end,'m','m');
                 }
                 else {
-                    ++_num_wind;
                     _reg_pos[win_start] = 1;
-                    _reg_info.emplace_back(_num_wind);
+                    _reg_info.emplace_back(0);
                     _reg_type.emplace_back(RegionType::MWM);
                 }
             }
@@ -661,9 +619,8 @@ namespace hypo
                 force_divide(win_start,end,'m',nxt);
             }
             else {
-                ++_num_wind;
                 _reg_pos[start] = 1;
-                _reg_info.emplace_back(_num_wind);
+                _reg_info.emplace_back(0);
                 if (nxt=='s') {_reg_type.emplace_back(RegionType::MWS);}
                 else {_reg_type.emplace_back(RegionType::MW);}
             }
@@ -671,13 +628,11 @@ namespace hypo
     }
     
     void Contig::force_divide(const UINT32 beg, const UINT32 end, char pvs, char nxt) {
-        const UINT32 IDEAL_WIND_SIZE =  Window_settings.ideal_swind_size;
-        const UINT32 cToo_large = 2*IDEAL_WIND_SIZE;
         // Find cutting pos
-        int start = beg;
-        int remaining_size = end-start;
+        UINT start = beg;
+        UINT remaining_size = end-start;
         std::vector<UINT32> cut_pos;
-        while (remaining_size >  IDEAL_WIND_SIZE) {
+        while (remaining_size >  Window_settings.ideal_swind_size) {
             UINT32 search_ind = start + Window_settings.wind_size_search_th;
             
             /*  # Breaking points(bp) of a window conceptually is the first and last bases of a window. Either should not fall into a HP.
@@ -703,9 +658,6 @@ namespace hypo
                 else { //(all cond pass=> good bp)
                     break;
                 }
-                if (search_ind > start+cToo_large) { // Window has become too large
-                    break;
-                }
             }
             if (search_ind < end) {
                 cut_pos.emplace_back(start);
@@ -723,9 +675,8 @@ namespace hypo
         /////// Create windows
         UINT32 num_windows=cut_pos.size();
         if (num_windows==1) { // only window
-            ++_num_wind;
             _reg_pos[beg] =1; //it's redundant; 
-            _reg_info.emplace_back(_num_wind);
+            _reg_info.emplace_back(0);
             if (pvs=='s' && nxt=='s') {_reg_type.emplace_back(RegionType::SWS);}
             else if (pvs=='s' && nxt=='m') {_reg_type.emplace_back(RegionType::SWM);}
             else if (pvs=='s' && nxt=='n') {_reg_type.emplace_back(RegionType::SW);}
@@ -738,127 +689,29 @@ namespace hypo
         }
         else { // at least 2 windows
             // First window
-            ++_num_wind;
             _reg_pos[beg] =1; //it's redundant; 
-            _reg_info.emplace_back(_num_wind);
+            _reg_info.emplace_back(0);
             if (pvs=='s') {_reg_type.emplace_back(RegionType::SW);}
             else if (pvs=='m') {_reg_type.emplace_back(RegionType::MW);}
             else {_reg_type.emplace_back(RegionType::OTHER);}
 
             // Internal windows
             for (UINT32 i=1; i<num_windows-1; ++i) {
-                ++_num_wind;
                 _reg_pos[cut_pos[i]] =1; 
-                _reg_info.emplace_back(_num_wind);
+                _reg_info.emplace_back(0);
                 _reg_type.emplace_back(RegionType::OTHER);
             }
             // Last
-            ++_num_wind;
             _reg_pos[cut_pos[num_windows-1]] =1; 
-            _reg_info.emplace_back(_num_wind);
+            _reg_info.emplace_back(0);
             if (nxt=='s') {_reg_type.emplace_back(RegionType::WS);}
             else if (nxt=='m') {_reg_type.emplace_back(RegionType::WM);}
             else {_reg_type.emplace_back(RegionType::OTHER);}
         }
     }  
-    // Does nothing if beg and end are the same
-    void Contig::fixed_divide(const UINT32 beg, const UINT32 end) {
-        // Find cutting pos
-        UINT start = beg;
-        UINT remaining_size = end-start;
-        std::vector<UINT32> cut_pos;
-        auto offset = Window_settings.ideal_lwind_size-1;
-        while (remaining_size >  Window_settings.ideal_lwind_size) {
-            UINT32 search_ind = start + offset;
-            if (search_ind < end) {
-                cut_pos.emplace_back(start);
-                start = search_ind+1;
-                remaining_size = end-start;
-            }
-            else { //exhausted
-                break;
-            }
-        }
-        if (start < end) { // Add last
-            cut_pos.emplace_back(start);
-        }
-        
-        /////// Create windows
-        UINT32 num_windows=cut_pos.size();
-        // Internal windows
-        for (UINT32 i=0; i<num_windows; ++i) {
-            ++_num_wind;
-            _reg_pos[cut_pos[i]] =1; 
-            _reg_info.emplace_back(_num_wind);
-            _reg_type.emplace_back(RegionType::LONG);
-        }        
-    }  
 
-    // Called only in LSA
-    void Contig::handle_ovl_li() {
-        INT64 li_ind = -1; // index ofthe window that will be labelled Li and will store the result
-        auto get_seq= [&](UINT32 i, UINT32 curr, UINT32 next) -> std::string {
-            std::string sq="";
-             if (_reg_type[i] == RegionType::SR) { // an SR
-                sq =_pseq.unpack(curr,next);
-            }
-            else if (_reg_type[i] == RegionType::INVALID) { // window can be invalid only in LSA mode
-                ; // Do nothing                
-            }
-            else if (_reg_type[i] == RegionType::LONG || _reg_type[i] == RegionType::PSEUDO) { // a long window
-                auto pi = _reg_info[i];
-                sq = (_plwindows[pi])->get_consensus();
-                if (li_ind==-1) {li_ind=i;}
-            }
-            else { // a valid short window
-                auto pi = _reg_info[i];
-                sq =(_pswindows[pi])->get_consensus();
-                if (li_ind==-1) {li_ind=i;}
-            }
-            return sq;
-        };
-        for (auto ov: _ovl_li) {
-            auto ob = std::get<0>(ov);
-            auto ol = std::get<1>(ov);
-            std::cout << _name <<" Rectified LI "<< ob << ":"<<ol<<std::endl;
-            UINT32 lft = (ob > ol) ? (ob-ol) : (0);
-            UINT32 rt = (ob + ol < _len) ? (ob+ol) : (_len);
-            auto lind = _Rreg_pos(lft);
-            if (_reg_pos[lft]==0) { // starts before
-                --lind;
-            }
-            // rind will point to 1 past the last region falling in the li (i.e. starting pos of the next reg)
-            auto rind = _Rreg_pos(rt);
-            auto mind = _Rreg_pos(ob);
-            if (_reg_pos[ob]==0) { // starts before
-                --mind;
-            }
-            std::string left_s="";
-            std::string rt_s="";
-            auto curr = _Sreg_pos(lind+1);
-            for (UINT32 i=lind; i <= mind; ++i) {                
-                auto next = _Sreg_pos(i+2);
-                left_s+=get_seq(i,curr,next);
-                curr = next;
-            }
-            curr = _Sreg_pos(mind+1);
-            for (UINT32 i=mind; i < rind; ++i) {                
-                auto next = _Sreg_pos(i+2);
-                rt_s+=get_seq(i,curr,next);
-                curr = next;
-            }
-            // Reset to INV, except li_ind which gets set to li
-            for (UINT32 i=lind; i < rind; ++i) {_reg_type[i] = RegionType::INVALID; _reg_info[i] = 0;}
-            _reg_type[li_ind] = RegionType::LI;
-            _reg_info[li_ind] = _pliwindows.size();
-            // draft here will not be used; for inspect file, better touse the original draft
-            _pliwindows.emplace_back(std::make_unique<Window>(_pseq,_Sreg_pos(li_ind+1),_Sreg_pos(li_ind+2),WindowType::LONG));
 
-            // Reset consensus of li_ind
-            auto pi = _reg_info[li_ind];
-            (_pliwindows[pi])->reset_consensus(left_s,rt_s);
-        }
-    } 
+    
+    
 
 } // namespace hypo
-

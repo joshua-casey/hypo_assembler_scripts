@@ -5,11 +5,8 @@
  */
 
 #include <assert.h>
-#include <iostream>
 #include <algorithm>
 #include <stack>
-#include <set>
-#include <map>
 #include <fstream>
 
 #include "spoa/graph.hpp"
@@ -43,26 +40,9 @@ bool Node::successor(std::uint32_t& dst, std::uint32_t label) const {
     return false;
 }
 
-std::shared_ptr<Edge> Node::get_edge(std::uint32_t end_id, bool is_outgoing_edge) const {
-    if (is_outgoing_edge) {
-        for (auto& edge: out_edges_) {
-            if (edge->end_node_id_ == end_id) {
-                return edge;
-            }
-        }
-        return nullptr;
-    } else {
-        for (auto& edge: in_edges_) {
-            if (edge->begin_node_id_ == end_id) {
-                return edge;
-            }
-        }
-        return nullptr;
-    }
-}
+std::uint32_t Node::coverage() const {
 
-std::set<std::uint32_t> Node::get_associated_labels() const {
-    std::set<std::uint32_t> label_set;
+    std::unordered_set<std::uint32_t> label_set;
     for (const auto& edge: in_edges_) {
         for (const auto& label: edge->sequence_labels_) {
             label_set.insert(label);
@@ -73,7 +53,7 @@ std::set<std::uint32_t> Node::get_associated_labels() const {
             label_set.insert(label);
         }
     }
-    return label_set;
+    return label_set.size();
 }
 
 std::unique_ptr<Edge> Graph::createEdge(std::uint32_t begin_node_id,
@@ -104,7 +84,7 @@ std::unique_ptr<Graph> createGraph() {
 Graph::Graph()
         : num_sequences_(0), num_codes_(0), coder_(kMaxAlphabetSize, -1),
         decoder_(kMaxAlphabetSize, -1), nodes_(), rank_to_node_id_(),
-        sequences_begin_nodes_ids_(), sequences_end_nodes_ids_(), consensus_() {
+        sequences_begin_nodes_ids_(), consensus_() {
 }
 
 Graph::~Graph() {
@@ -130,24 +110,6 @@ void Graph::add_edge(std::uint32_t begin_node_id, std::uint32_t end_node_id,
 
     std::shared_ptr<Edge> edge = createEdge(begin_node_id, end_node_id,
         num_sequences_, weight);
-    nodes_[begin_node_id]->out_edges_.emplace_back(edge);
-    nodes_[end_node_id]->in_edges_.emplace_back(edge);
-}
-
-void Graph::add_edge(std::uint32_t begin_node_id, std::uint32_t end_node_id,
-    std::uint32_t weight, std::uint32_t sequence_label) {
-
-    assert(begin_node_id < nodes_.size() && end_node_id < nodes_.size());
-
-    for (const auto& edge: nodes_[begin_node_id]->out_edges_) {
-        if (edge->end_node_id_ == end_node_id) {
-            edge->add_sequence(sequence_label, weight);
-            return;
-        }
-    }
-
-    std::shared_ptr<Edge> edge = createEdge(begin_node_id, end_node_id,
-        sequence_label, weight);
     nodes_[begin_node_id]->out_edges_.emplace_back(edge);
     nodes_[end_node_id]->in_edges_.emplace_back(edge);
 }
@@ -178,7 +140,7 @@ void Graph::add_alignment(const Alignment& alignment, const char* sequence,
 
     std::vector<std::uint32_t> weights;
     for (std::uint32_t i = 0; i < quality_size; ++i) {
-        weights.emplace_back(static_cast<std::uint32_t>(quality[i] - 32)); // PHRED quality
+        weights.emplace_back(static_cast<std::uint32_t>(quality[i] - 33)); // PHRED quality
     }
     add_alignment(alignment, sequence, sequence_size, weights);
 }
@@ -193,7 +155,6 @@ void Graph::add_alignment(const Alignment& alignment, const char* sequence,
     std::uint32_t sequence_size, const std::vector<std::uint32_t>& weights) {
 
     if (sequence_size == 0) {
-        ++num_sequences_;
         return;
     }
     if (sequence_size != weights.size()) {
@@ -211,11 +172,11 @@ void Graph::add_alignment(const Alignment& alignment, const char* sequence,
     }
 
     if (alignment.empty()) { // no alignment
-        auto id_pairs = add_sequence(sequence, weights, 0, sequence_size);
-        std::int32_t begin_node_id = id_pairs.first, end_node_id = id_pairs.second;
+        std::int32_t begin_node_id = add_sequence(sequence, weights, 0,
+            sequence_size);
         ++num_sequences_;
         sequences_begin_nodes_ids_.emplace_back(begin_node_id);
-        sequences_end_nodes_ids_.emplace_back(end_node_id);
+
         topological_sort();
         return;
     }
@@ -232,11 +193,11 @@ void Graph::add_alignment(const Alignment& alignment, const char* sequence,
 
     std::uint32_t tmp = nodes_.size();
     std::int32_t begin_node_id = add_sequence(sequence, weights, 0,
-        valid_seq_ids.front()).first;
+        valid_seq_ids.front());
     std::int32_t head_node_id = tmp == nodes_.size() ? -1 : nodes_.size() - 1;
 
-    auto end_pair = add_sequence(sequence, weights, valid_seq_ids.back() + 1, sequence_size);
-    std::int32_t tail_node_id = end_pair.first, end_node_id = end_pair.second;
+    std::int32_t tail_node_id = add_sequence(sequence, weights,
+        valid_seq_ids.back() + 1, sequence_size);
 
     std::int32_t new_node_id = -1;
     float prev_weight = head_node_id == -1 ?
@@ -301,9 +262,6 @@ void Graph::add_alignment(const Alignment& alignment, const char* sequence,
         // both nodes contribute to edge weight
         add_edge(head_node_id, tail_node_id,
             prev_weight + weights[valid_seq_ids.back() + 1]);
-        sequences_end_nodes_ids_.emplace_back(end_node_id);
-    } else {
-        sequences_end_nodes_ids_.emplace_back(new_node_id);
     }
 
     ++num_sequences_;
@@ -312,12 +270,12 @@ void Graph::add_alignment(const Alignment& alignment, const char* sequence,
     topological_sort();
 }
 
-std::pair<std::int32_t, std::int32_t> Graph::add_sequence(const char* sequence,
+std::int32_t Graph::add_sequence(const char* sequence,
     const std::vector<std::uint32_t>& weights, std::uint32_t begin,
     std::uint32_t end) {
 
     if (begin == end) {
-        return std::make_pair(-1, -1);
+        return -1;
     }
 
     std::int32_t first_node_id = add_node(coder_[sequence[begin]]);
@@ -329,7 +287,7 @@ std::pair<std::int32_t, std::int32_t> Graph::add_sequence(const char* sequence,
         add_edge(node_id - 1, node_id, weights[i - 1] + weights[i]);
     }
 
-    return std::make_pair(first_node_id, node_id);
+    return first_node_id;
 }
 
 void Graph::topological_sort() {
@@ -429,6 +387,45 @@ std::uint32_t Graph::initialize_multiple_sequence_alignment(
     return msa_id;
 }
 
+// RITU
+void Graph::generate_multiple_sequence_alignment_custom(const std::vector<uint32_t>& interesting,std::vector<std::string>& msa) {
+
+    // assign msa id to each node
+    std::vector<std::uint32_t> node_id_to_msa_id;
+    auto msa_length = initialize_multiple_sequence_alignment(node_id_to_msa_id);
+
+    // extract sequences from graph and create msa strings (add indels(-) where
+    // necessary)
+    // RITU: DO IT ONLY FOR DRAFT SEQ (SEQ NUMBER 0)
+    for (std::uint32_t i: interesting) {
+    //for (std::uint32_t i=0; i < 1; ++i) {
+        std::string alignment_str(msa_length, '-');
+        std::uint32_t node_id = sequences_begin_nodes_ids_[i];
+
+        while (true) {
+            alignment_str[node_id_to_msa_id[node_id]] =
+                decoder_[nodes_[node_id]->code_];
+
+            if (!nodes_[node_id]->successor(node_id, i)) {
+                break;
+            }
+        }
+
+        msa.emplace_back(alignment_str);
+    }
+    
+    // do the same for consensus sequence
+    traverse_heaviest_bundle();
+
+    std::string alignment_str(msa_length, '-');
+    for (const auto& node_id: consensus_) {
+        alignment_str[node_id_to_msa_id[node_id]] =
+            decoder_[nodes_[node_id]->code_];
+    }
+    msa.emplace_back(alignment_str);
+    
+}
+
 void Graph::generate_multiple_sequence_alignment(std::vector<std::string>& dst,
     bool include_consensus) {
 
@@ -456,7 +453,7 @@ void Graph::generate_multiple_sequence_alignment(std::vector<std::string>& dst,
 
     if (include_consensus) {
         // do the same for consensus sequence
-        traverse_heaviest_bundle_orig();
+        traverse_heaviest_bundle();
 
         std::string alignment_str(msa_length, '-');
         for (const auto& node_id: consensus_) {
@@ -467,42 +464,69 @@ void Graph::generate_multiple_sequence_alignment(std::vector<std::string>& dst,
     }
 }
 
-void Graph::generate_multiple_sequence_alignment_custom(std::vector<std::string>& msa) {
+std::string Graph::generate_consensus() {
 
-    // assign msa id to each node
-    std::vector<std::uint32_t> node_id_to_msa_id;
-    auto msa_length = initialize_multiple_sequence_alignment(node_id_to_msa_id);
+    traverse_heaviest_bundle();
+    std::string consensus_str = "";
+    for (const auto& node_id: consensus_) {
+        consensus_str += decoder_[nodes_[node_id]->code_];
+    }
 
-    // extract sequences from graph and create msa strings (add indels(-) where
-    // necessary)
-    // RITU: DO IT ONLY FOR DRAFT SEQ (SEQ NUMBER 0)
-    //for (std::uint32_t i: interesting) {
-    for (std::uint32_t i=0; i < 1; ++i) {
-        std::string alignment_str(msa_length, '-');
-        std::uint32_t node_id = sequences_begin_nodes_ids_[i];
+    return consensus_str;
+}
 
-        while (true) {
-            alignment_str[node_id_to_msa_id[node_id]] =
-                decoder_[nodes_[node_id]->code_];
+std::string Graph::generate_consensus(std::vector<std::uint32_t>& dst,
+    bool verbose) {
 
-            if (!nodes_[node_id]->successor(node_id, i)) {
-                break;
+    auto consensus_str = generate_consensus();
+
+    dst.clear();
+    if (verbose == false) {
+        for (const auto& node_id: consensus_) {
+            std::uint32_t total_coverage = nodes_[node_id]->coverage();
+            for (const auto& aid: nodes_[node_id]->aligned_nodes_ids_) {
+                total_coverage += nodes_[aid]->coverage();
+            }
+            dst.emplace_back(total_coverage);
+        }
+    } else {
+        dst.resize((num_codes_ + 1) * consensus_.size(), 0);
+
+        std::vector<std::uint32_t> node_id_to_msa_id;
+        initialize_multiple_sequence_alignment(node_id_to_msa_id);
+
+        for (std::uint32_t i = 0; i < num_sequences_; ++i) {
+            auto node_id = sequences_begin_nodes_ids_[i];
+
+            bool count_indels = false;
+            std::uint32_t c = 0, l;
+            while (true) {
+                for (; c < consensus_.size() &&
+                    node_id_to_msa_id[consensus_[c]] < node_id_to_msa_id[node_id]; ++c);
+                if (c >= consensus_.size()) {
+                    break;
+                }
+
+                if (node_id_to_msa_id[consensus_[c]] == node_id_to_msa_id[node_id]) {
+                    if (count_indels) {
+                        for (std::uint32_t j = l + 1; j < c; ++j) {
+                            ++dst[num_codes_ * consensus_.size() + j];
+                        }
+                    }
+                    count_indels = true;
+                    l = c;
+
+                    ++dst[nodes_[node_id]->code_ * consensus_.size() + c];
+                }
+
+                if (!nodes_[node_id]->successor(node_id, i)) {
+                    break;
+                }
             }
         }
-
-        msa.emplace_back(alignment_str);
     }
-    
-    // do the same for consensus sequence
-    traverse_heaviest_bundle_orig();
 
-    std::string alignment_str(msa_length, '-');
-    for (const auto& node_id: consensus_) {
-        alignment_str[node_id_to_msa_id[node_id]] =
-            decoder_[nodes_[node_id]->code_];
-    }
-    msa.emplace_back(alignment_str);
-    
+    return consensus_str;
 }
 
 // Ritu
@@ -581,205 +605,22 @@ std::string Graph::generate_consensus_custom2(const std::vector<uint32_t>& inter
     return consensus_str;
 }
 
-std::string Graph::generate_consensus() {
-    exclude_labels_.clear();
-    traverse_heaviest_bundle_orig();
-    std::string consensus_str = "";
-    for (const auto& node_id: consensus_) {
-        consensus_str += decoder_[nodes_[node_id]->code_];
-    }
-    return consensus_str;
-}
-
-void Graph::generate_multiple_consensus(double threshold, std::vector<std::string>& all_consensuses) {
-    exclude_labels_.clear();
-    std::uint32_t C = 0;
-    while (C < 1.0 * num_sequences_ * threshold) {
-        C += traverse_heaviest_bundle();
-        std::string consensus_str = "";
-        for (const auto& node_id: consensus_) {
-            consensus_str += decoder_[nodes_[node_id]->code_];
-        }
-        if (!all_consensuses.empty() && consensus_str == all_consensuses.back()) return;
-        all_consensuses.push_back(consensus_str);
-    }
-}
-
-void Graph::generate_multiple_consensus_new(double ratio_threshold, int constant_threshold, std::vector<std::string>& all_consensuses) {
-    std::set<std::uint32_t> read_ids;
-    for(std::uint32_t i = 0; i < num_sequences_; i++) read_ids.insert(i);
-    std::unordered_set<std::string> result_consensus;
-    recursive_consensus(ratio_threshold, constant_threshold, read_ids, result_consensus);
-    for(auto & c : result_consensus) all_consensuses.push_back(c);
-}
-
-void Graph::recursive_consensus(const double ratio_threshold, const int constant_threshold, const std::set<std::uint32_t> & enabled_reads, std::unordered_set<std::string> & result_consensus) {
-    std::set<std::uint32_t> bottleneck_reads;
-    traverse_heaviest_bundle_new(enabled_reads, bottleneck_reads);
-    
-    if(bottleneck_reads.size() < constant_threshold || ((double)bottleneck_reads.size() / (double)enabled_reads.size()) > ratio_threshold) { // should reach this at some point
-        std::string consensus_str = "";
-        for (const auto& node_id: consensus_) {
-            consensus_str += decoder_[nodes_[node_id]->code_];
-        }
-        result_consensus.insert(consensus_str);
-    } else {        
-        std::set<std::uint32_t> remainder;
-        std::set_difference(enabled_reads.begin(), enabled_reads.end(), bottleneck_reads.begin(), bottleneck_reads.end(), std::inserter(remainder, remainder.end()));
-        recursive_consensus(ratio_threshold, constant_threshold, bottleneck_reads, result_consensus);
-        recursive_consensus(ratio_threshold, constant_threshold, remainder, result_consensus);
-    }
-}
-
-std::pair<std::string, std::string> Graph::generate_consensus(double support_fraction) {
-    exclude_labels_.clear();
-    std::int32_t bottleneck = traverse_heaviest_bundle();
-    std::string consensus_str = "";
-    for (const auto& node_id: consensus_) {
-        consensus_str += decoder_[nodes_[node_id]->code_];
-    }
-    
-    if (bottleneck >= 1.0 * num_sequences_ * support_fraction) {
-        return {consensus_str, ""};
-    }
-    traverse_heaviest_bundle();
-    std::string consensus_str_2 = "";
-    for (const auto& node_id: consensus_) {
-        consensus_str_2 += decoder_[nodes_[node_id]->code_];
-    }
-    return {consensus_str, consensus_str_2};
-}
-
-std::string Graph::generate_consensus(std::vector<std::uint32_t>& dst,
-    bool verbose) {
-
-    auto consensus_str = generate_consensus();
-
-    dst.clear();
-    if (verbose == false) {
-        for (const auto& node_id: consensus_) {
-            std::uint32_t total_coverage = nodes_[node_id]->coverage();
-            for (const auto& aid: nodes_[node_id]->aligned_nodes_ids_) {
-                total_coverage += nodes_[aid]->coverage();
-            }
-            dst.emplace_back(total_coverage);
-        }
-    } else {
-        dst.resize((num_codes_ + 1) * consensus_.size(), 0);
-
-        std::vector<std::uint32_t> node_id_to_msa_id;
-        initialize_multiple_sequence_alignment(node_id_to_msa_id);
-
-        for (std::uint32_t i = 0; i < num_sequences_; ++i) {
-            auto node_id = sequences_begin_nodes_ids_[i];
-
-            bool count_indels = false;
-            std::uint32_t c = 0, l;
-            while (true) {
-                for (; c < consensus_.size() &&
-                    node_id_to_msa_id[consensus_[c]] < node_id_to_msa_id[node_id]; ++c);
-                if (c >= consensus_.size()) {
-                    break;
-                }
-
-                if (node_id_to_msa_id[consensus_[c]] == node_id_to_msa_id[node_id]) {
-                    if (count_indels) {
-                        for (std::uint32_t j = l + 1; j < c; ++j) {
-                            ++dst[num_codes_ * consensus_.size() + j];
-                        }
-                    }
-                    count_indels = true;
-                    l = c;
-
-                    ++dst[nodes_[node_id]->code_ * consensus_.size() + c];
-                }
-
-                if (!nodes_[node_id]->successor(node_id, i)) {
-                    break;
-                }
-            }
-        }
-    }
-
-    return consensus_str;
-}
 
 
-
-void find_mode(std::vector<std::uint32_t>& arr, std::set<std::uint32_t>& exclude, std::vector<std::uint32_t>& ans) {
-    ans.clear();
-    std::map<std::uint32_t, std::int32_t> counter;
-    for (size_t i = 0; i < arr.size(); i++) {
-        if (exclude.find(i) != exclude.end()) continue;
-        auto x = arr[i];
-        counter[x]++;
-    }
-    std::int32_t max_count = 0;
-    for (const auto& pair: counter) {
-        if (pair.second > max_count) {
-            max_count = pair.second;
-        }
-    }
-    for (const auto& pair: counter) {
-        if (pair.second == max_count) {
-            ans.push_back(pair.first);
-        }
-    }
-}
-
-void find_mode_new(std::vector<std::uint32_t>& arr, const std::set<std::uint32_t>& include, std::vector<std::uint32_t>& ans) {
-    ans.clear();
-    std::map<std::uint32_t, std::int32_t> counter;
-    for (size_t i = 0; i < arr.size(); i++) {
-        if (include.find(i) == include.end()) continue;
-        auto x = arr[i];
-        counter[x]++;
-    }
-    std::int32_t max_count = 0;
-    for (const auto& pair: counter) {
-        if (pair.second > max_count) {
-            max_count = pair.second;
-        }
-    }
-    for (const auto& pair: counter) {
-        if (pair.second == max_count) {
-            ans.push_back(pair.first);
-        }
-    }
-}
-
-void Graph::traverse_heaviest_bundle_orig() {
+void Graph::traverse_heaviest_bundle() {
 
     std::vector<std::int32_t> predecessors(nodes_.size(), -1);
-    std::vector<std::int32_t> predecessors_min_read_id(nodes_.size(), -1);
     std::vector<std::int64_t> scores(nodes_.size(), -1);
 
     std::uint32_t max_score_id = 0;
-    std::int32_t current_minimum_id = 0;
     for (const auto& node_id: rank_to_node_id_) {
         for (const auto& edge: nodes_[node_id]->in_edges_) {
-            if (scores[node_id] < edge->total_weight_ || (scores[node_id] == edge->total_weight_ && scores[predecessors[node_id]] < scores[edge->begin_node_id_])) {
+            if (scores[node_id] < edge->total_weight_ ||
+                (scores[node_id] == edge->total_weight_ &&
+                scores[predecessors[node_id]] <= scores[edge->begin_node_id_])) {
 
                 scores[node_id] = edge->total_weight_;
                 predecessors[node_id] = edge->begin_node_id_;
-                
-                current_minimum_id = -1;
-                for (auto lb: edge->sequence_labels_) {
-                    if(current_minimum_id == -1 || current_minimum_id > lb) current_minimum_id = lb;
-                }
-                predecessors_min_read_id[node_id] = current_minimum_id;
-                // std::cout << "Get minimum read id: " << current_minimum_id << std::endl;
-            } else if(scores[node_id] == edge->total_weight_) { // compare minimum read ID?
-                current_minimum_id = -1;
-                for (auto lb: edge->sequence_labels_) {
-                    if(current_minimum_id == -1 || current_minimum_id > lb) current_minimum_id = lb;
-                }
-                
-                // std::cout << "Compare minimum read id: " << current_minimum_id << " " << predecessors_min_read_id[node_id] << std::endl;
-                if(current_minimum_id < predecessors_min_read_id[node_id]) {
-                    predecessors[node_id] = edge->begin_node_id_;
-                    predecessors_min_read_id[node_id] = current_minimum_id;
-                }
             }
         }
 
@@ -816,156 +657,6 @@ void Graph::traverse_heaviest_bundle_orig() {
     std::reverse(consensus_.begin(), consensus_.end());
 }
 
-std::int32_t Graph::traverse_heaviest_bundle() {
-    std::vector<std::int32_t> predecessors(nodes_.size(), -1);
-    std::vector<std::int32_t> scores(nodes_.size(), -1);
-
-    for (const auto& node_id: rank_to_node_id_) {
-        int bestScore = -1, bestNbScore = -1, pred_neighbour = -1;
-        for (const auto& edge: nodes_[node_id]->in_edges_) {
-            int weight = edge->sequence_labels_.size();
-            int neighbourId = edge->begin_node_id_;
-            if (!exclude_labels_.empty()) {
-                weight = 0;
-                for (auto lb: edge->sequence_labels_) {
-                    if (exclude_labels_.find(lb) == exclude_labels_.end()) {
-                        weight++;
-                    }
-                }
-            }
-            if (weight == 0) continue;
-            if (weight > bestScore || (weight == bestScore && scores[neighbourId] > bestNbScore)) {
-                bestScore = weight;
-                bestNbScore = scores[neighbourId];
-                pred_neighbour = neighbourId;
-            }
-        }
-        if (bestScore == -1) {
-            scores[node_id] = 0;
-            scores[node_id] = -1;
-        } else {
-            scores[node_id] = bestScore + bestNbScore;
-            predecessors[node_id] = pred_neighbour;
-        }
-    }
-    std::int32_t max_score_id = -1;
-    std::vector<std::uint32_t> modes;
-    find_mode(sequences_end_nodes_ids_, exclude_labels_, modes);
-    for (auto x: modes) {
-        if (max_score_id == -1 || scores[x] > scores[max_score_id]) {
-            max_score_id = x;
-        }
-    }
-    find_mode(sequences_begin_nodes_ids_, exclude_labels_, modes);
-    std::set<std::int32_t> end_ids;
-    for (auto x: modes) {
-        end_ids.insert(x);
-    }
-
-    // traceback
-    std::int32_t cur_id = max_score_id, bottleneck = num_sequences_ + 1;
-    std::shared_ptr<Edge> bottleneck_edge = nullptr;
-    consensus_.clear();
-    while (cur_id != -1 && end_ids.find(cur_id) == end_ids.end()) {
-        consensus_.emplace_back(cur_id);
-        if (predecessors[cur_id] != -1 && bottleneck > scores[cur_id] - scores[predecessors[cur_id]]) {
-            bottleneck_edge = nodes_[cur_id]->get_edge(predecessors[cur_id], 0);
-            bottleneck = scores[cur_id] - scores[predecessors[cur_id]];
-        } else if (predecessors[cur_id] != -1 && bottleneck == scores[cur_id] - scores[predecessors[cur_id]]
-                    && bottleneck_edge != nullptr 
-                    && bottleneck_edge->sequence_labels_.size() < nodes_[cur_id]->get_edge(predecessors[cur_id], 0)->sequence_labels_.size()) {
-            bottleneck_edge = nodes_[cur_id]->get_edge(predecessors[cur_id], 0);   
-        }
-        cur_id = predecessors[cur_id];
-    }
-    if (cur_id != -1) {
-        consensus_.emplace_back(cur_id);
-    }
-    if (bottleneck_edge != nullptr) {
-        for (auto& label: bottleneck_edge->sequence_labels_) {
-            exclude_labels_.insert(label);
-        }
-    }
-    
-    std::reverse(consensus_.begin(), consensus_.end());
-    return bottleneck;
-}
-
-std::int32_t Graph::traverse_heaviest_bundle_new(const std::set<std::uint32_t> & included_labels, std::set<std::uint32_t> & bottleneck_labels) {
-    std::vector<std::int32_t> predecessors(nodes_.size(), -1);
-    std::vector<std::int32_t> scores(nodes_.size(), -1);
-
-    for (const auto& node_id: rank_to_node_id_) {
-        int bestScore = -1, bestNbScore = -1, pred_neighbour = -1;
-        for (const auto& edge: nodes_[node_id]->in_edges_) {
-            int weight = edge->sequence_labels_.size();
-            int neighbourId = edge->begin_node_id_;
-            if (!included_labels.empty()) {
-                weight = 0;
-                for (auto lb: edge->sequence_labels_) {
-                    if (included_labels.find(lb) != included_labels.end()) {
-                        weight++;
-                    }
-                }
-            }
-            if (weight == 0) continue;
-            if (weight > bestScore || (weight == bestScore && scores[neighbourId] > bestNbScore)) {
-                bestScore = weight;
-                bestNbScore = scores[neighbourId];
-                pred_neighbour = neighbourId;
-            }
-        }
-        if (bestScore == -1) {
-            scores[node_id] = 0;
-            scores[node_id] = -1;
-        } else {
-            scores[node_id] = bestScore + bestNbScore;
-            predecessors[node_id] = pred_neighbour;
-        }
-    }
-    std::int32_t max_score_id = -1;
-    std::vector<std::uint32_t> modes;
-    find_mode_new(sequences_end_nodes_ids_, included_labels, modes);
-    for (auto x: modes) {
-        if (max_score_id == -1 || scores[x] > scores[max_score_id]) {
-            max_score_id = x;
-        }
-    }
-    find_mode_new(sequences_begin_nodes_ids_, included_labels, modes);
-    std::set<std::int32_t> end_ids;
-    for (auto x: modes) {
-        end_ids.insert(x);
-    }
-
-    // traceback
-    std::int32_t cur_id = max_score_id, bottleneck = num_sequences_ + 1;
-    std::shared_ptr<Edge> bottleneck_edge = nullptr;
-    consensus_.clear();
-    while (cur_id != -1 && end_ids.find(cur_id) == end_ids.end()) {
-        consensus_.emplace_back(cur_id);
-        if (predecessors[cur_id] != -1 && bottleneck > scores[cur_id] - scores[predecessors[cur_id]]) {
-            bottleneck_edge = nodes_[cur_id]->get_edge(predecessors[cur_id], 0);
-            bottleneck = scores[cur_id] - scores[predecessors[cur_id]];
-        } else if (predecessors[cur_id] != -1 && bottleneck == scores[cur_id] - scores[predecessors[cur_id]]
-                    && bottleneck_edge != nullptr 
-                    && bottleneck_edge->sequence_labels_.size() < nodes_[cur_id]->get_edge(predecessors[cur_id], 0)->sequence_labels_.size()) {
-            bottleneck_edge = nodes_[cur_id]->get_edge(predecessors[cur_id], 0);   
-        }
-        cur_id = predecessors[cur_id];
-    }
-    if (cur_id != -1) {
-        consensus_.emplace_back(cur_id);
-    }
-    if (bottleneck_edge != nullptr) {
-        for (auto& label: bottleneck_edge->sequence_labels_) {
-            if(included_labels.find(label) != included_labels.end()) bottleneck_labels.insert(label);
-        }
-    }
-    
-    std::reverse(consensus_.begin(), consensus_.end());
-    return bottleneck;
-}
-
 std::uint32_t Graph::branch_completion(std::vector<std::int64_t>& scores,
     std::vector<std::int32_t>& predecessors, std::uint32_t rank) {
 
@@ -990,13 +681,12 @@ std::uint32_t Graph::branch_completion(std::vector<std::int64_t>& scores,
             if (scores[edge->begin_node_id_] == -1) {
                 continue;
             }
-            std::uint32_t weight = edge->sequence_labels_.size();
 
-            if (scores[node_id] < weight ||
-                (scores[node_id] == weight &&
+            if (scores[node_id] < edge->total_weight_ ||
+                (scores[node_id] == edge->total_weight_ &&
                 scores[predecessors[node_id]] <= scores[edge->begin_node_id_])) {
 
-                scores[node_id] = weight;
+                scores[node_id] = edge->total_weight_;
                 predecessors[node_id] = edge->begin_node_id_;
             }
         }
@@ -1152,220 +842,12 @@ void Graph::print_dot(const std::string& path) const {
     out.close();
 }
 
-void Graph::convert_to_adjacent_list(std::vector<std::vector<std::pair<std::uint32_t, std::int32_t>>>& adj_list) {
-    adj_list.assign(nodes_.size() + 2, std::vector<std::pair<std::uint32_t, std::int32_t>>());
-    for (const auto node_id: rank_to_node_id_) {
-        for (const auto neighbour: nodes_[node_id]->out_edges_) {
-            std::uint32_t weight = neighbour->sequence_labels_.size();
-            if (!exclude_labels_.empty()) {
-                weight = 0;
-                for (const auto label: neighbour->sequence_labels_) {
-                    if (exclude_labels_.find(label) == exclude_labels_.end()) weight++;
-                }
-            }
-
-            if (weight > 0) {
-                adj_list[node_id].emplace_back(neighbour->end_node_id_, weight);
-            }
-        }
-    }
-    
-    std::vector<int> count;
-    count.assign(nodes_.size(), 0);
-    for (size_t i = 0; i < sequences_begin_nodes_ids_.size(); i++) {
-        if (exclude_labels_.empty() || exclude_labels_.find(i) == exclude_labels_.end()) {
-            count[sequences_begin_nodes_ids_[i]]++;
-        }
-    }
-    // Head id: nodes_.size(), tail id: nodes_.size() + 1
-    for (size_t i = 0; i < count.size(); i++) {
-        if (count[i] > 0) {
-            adj_list[nodes_.size()].emplace_back(i, count[i]);
-        }
-    } 
-
-    count.assign(nodes_.size(), 0);
-    for (size_t i = 0; i < sequences_end_nodes_ids_.size(); i++) {
-        if (exclude_labels_.empty() || exclude_labels_.find(i) == exclude_labels_.end()) {
-            count[sequences_end_nodes_ids_[i]]++;
-        }
-    }
-    // Head id: nodes_.size(), tail id: nodes_.size() + 1
-    for (size_t i = 0; i < count.size(); i++) {
-        if (count[i] > 0) {
-            adj_list[i].emplace_back(nodes_.size() + 1, count[i]);
-        }
-    } 
-}
-
-std::string Graph::find_consensus() {
-    int head_id = nodes_.size(), tail_id = nodes_.size() + 1;
-    std::vector<std::vector<std::pair<std::uint32_t, std::int32_t>>> adj_list;
-    convert_to_adjacent_list(adj_list);
-    dijsktra(head_id, tail_id, adj_list);
-
-    std::string consensus_str = "";
-    for (const auto& node_id: consensus_) {
-        consensus_str += decoder_[nodes_[node_id]->code_];
-    }
-    exclude_labels_.clear();
-    return consensus_str;
-}
-
-std::pair<std::string, std::string> Graph::find_consensus(double support_fraction) {
-    int head_id = nodes_.size(), tail_id = nodes_.size() + 1;
-    std::vector<std::vector<std::pair<std::uint32_t, std::int32_t>>> adj_list;
-    convert_to_adjacent_list(adj_list);
-    std::int32_t bottleneck = dijsktra(head_id, tail_id, adj_list);
-
-    // std::cout << "bottleneck " << bottleneck << std::endl;
-    std::string consensus_str = "";
-    for (const auto& node_id: consensus_) {
-        if (node_id < nodes_.size())
-        consensus_str += decoder_[nodes_[node_id]->code_];
-    }
-   
-    if (bottleneck == -1 || bottleneck >= 1.0 * num_sequences_ * support_fraction) {
-        return {consensus_str, ""};
-    }
-
-    convert_to_adjacent_list(adj_list);
-    dijsktra(head_id, tail_id, adj_list);
-
-    std::string consensus_str_2 = "";
-    for (const auto& node_id: consensus_) {
-        if (node_id < nodes_.size())
-        consensus_str_2 += decoder_[nodes_[node_id]->code_];
-    }
-    exclude_labels_.clear();
-    return {consensus_str, consensus_str_2};
-}
-
-inline std::int32_t get_edge_weight(std::uint32_t begin_id, std::uint32_t end_id, 
-    std::vector<std::vector<std::pair<std::uint32_t, std::int32_t>>>& adj_list) {
-    for (auto& nb: adj_list[begin_id]) {
-        if (nb.first == end_id)
-            return nb.second;
-    }
-    return 0;
-}
-
-std::int32_t Graph::dijsktra(std::uint32_t source, std::uint32_t destination,
-                     std::vector<std::vector<std::pair<std::uint32_t, std::int32_t>>>& adj_list) {
-    const std::int32_t INF = 10000000;
-    const std::uint32_t N = adj_list.size();
-    std::vector<std::int32_t> previous, width;
-    std::vector<bool> used;
-    previous.assign(N, -1);
-    width.assign(N, -INF);
-    used.assign(N, 0);
-    width[source] = INF;
-    std::priority_queue<std::pair<std::int32_t, std::uint32_t>> pq;
-    pq.emplace(width[source], source);
-    while (!pq.empty()) {
-        std::uint32_t u = pq.top().second;
-        pq.pop(); 
-        used[u] = 0;
-        for (auto neighbour: adj_list[u]) {
-            std::uint32_t v = neighbour.first;
-            std::int32_t weight = neighbour.second;
-            if (width[v] > std::min(weight, width[u])) continue;
-            std::int32_t alt = std::max(width[v], std::min(weight, width[u]));
-            if (alt > width[v]) {
-                width[v] = alt;
-                previous[v] = u;
-                if (!used[v]) {
-                    used[v] = 1;
-                    pq.emplace(width[v], v);
-                }
-            } else if (alt == width[v] && weight > get_edge_weight((std::uint32_t) previous[v], v, adj_list)) {
-                previous[v] = u;
-                if (!used[v]) {
-                    used[v] = 1;
-                    pq.emplace(width[v], v);
-                }
-            }
-        }
-    }
-
-    consensus_.clear();
-    if (width[destination] == -INF) {
-        return -1;
-    }
-    std::int32_t bottleneck = width[destination];
-    std::int32_t cur = destination;
-    std::pair<std::int32_t, std::int32_t> bottleneck_edge_id = {-1, -1};
-    while (cur != -1) {
-        if (bottleneck_edge_id.first == -1 && previous[cur] != -1) {
-            std::uint32_t begin = (std::uint32_t) previous[cur], end = (std::uint32_t) cur;
-            if (get_edge_weight(begin, end, adj_list) == bottleneck) {
-                bottleneck_edge_id.first = previous[cur];
-                bottleneck_edge_id.second = cur;
-            }
-        }
-        consensus_.push_back(cur);
-        cur = previous[cur];
-    }
-    consensus_.pop_back();
-    std::reverse(consensus_.begin(), consensus_.end());
-    consensus_.pop_back();
-    if (bottleneck_edge_id.first != -1 && bottleneck_edge_id.second != -1) {
-        if ((std::uint32_t) bottleneck_edge_id.first == source) {
-            for (auto lb: sequences_begin_nodes_ids_) exclude_labels_.insert(lb);
-        } else if ((std::uint32_t) bottleneck_edge_id.second == destination) {
-            for (auto lb: sequences_end_nodes_ids_) exclude_labels_.insert(lb);
-        } else {
-            auto bottleneck_edge = nodes_[bottleneck_edge_id.first]->get_edge(bottleneck_edge_id.second, 1);
-            for (auto lb: bottleneck_edge->sequence_labels_) {
-                exclude_labels_.insert(lb);
-            }
-        }
-        return width[destination];
-    }
-    return -1;
-}
-
-void Graph::merge_homopolymers() {
-    std::set<std::uint32_t> neighbors;
-    for (const auto id: rank_to_node_id_) {
-        if (nodes_[id]->out_edges().empty() || nodes_[id]->out_edges().back()->sequence_labels_.empty()) continue;
-        neighbors.clear();
-        for (auto edge: nodes_[id]->out_edges()) {
-            neighbors.insert(edge->end_node_id());
-        }
-        for (auto edge: nodes_[id]->out_edges()) {
-            auto nb_node_id = edge->end_node_id();
-            if (nodes_[nb_node_id]->out_edges().empty() || nodes_[nb_node_id]->out_edges().back()->sequence_labels_.empty()) continue;
-            for (auto nb_edge: nodes_[nb_node_id]->out_edges()) {
-                auto nbnb_id = nb_edge->end_node_id();
-                if (neighbors.find(nbnb_id) != neighbors.end() && nodes_[id]->code() != nodes_[nb_node_id]->code() && nodes_[nb_node_id]->code() == nodes_[nbnb_id]->code()) {
-                    auto primary_edge = nodes_[id]->get_edge(nbnb_id, 1);
-                    auto alter_edge = edge->sequence_labels_.size() < nb_edge->sequence_labels_.size() ? edge : nb_edge;
-                    if (primary_edge->sequence_labels_.size() >= alter_edge->sequence_labels_.size()) {
-                        for (auto label: alter_edge->sequence_labels_) {
-                            primary_edge->add_sequence(label);
-                        }
-                        alter_edge->sequence_labels_.clear();
-                    } else {
-                        for (auto label: primary_edge->sequence_labels_) {
-                            edge->add_sequence(label);
-                            nb_edge->add_sequence(label);
-                        }
-                        primary_edge->sequence_labels_.clear();
-                    }
-                }
-            }
-        }
-    }
-}
-
 void Graph::clear() {
     std::fill(coder_.begin(), coder_.end(), -1);
     std::fill(decoder_.begin(), decoder_.end(), -1);
     nodes_.clear();
     rank_to_node_id_.clear();
     sequences_begin_nodes_ids_.clear();
-    sequences_end_nodes_ids_.clear();
     consensus_.clear();
 }
 

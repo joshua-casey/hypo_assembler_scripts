@@ -22,24 +22,21 @@
 
 #include <sys/time.h>
 #include <getopt.h>
-#include <string>
 #include <cctype>
 #include <math.h> 
 #include <algorithm>
 #include <sys/stat.h>
-#include <sys/wait.h>
-#include <cstdlib>
-#include "slog/Monitor.hpp"
 
 #include "globalDefs.hpp"
 #include "Hypo.hpp"
+
 
 /** Module containing main() method for reading and processing arguments.
  */
 
 namespace hypo{
 void usage (void);
-void decodeFlags(int argc, char* argv [], InputFlags& flags, FileNames& filenames);
+void decodeFlags(int argc, char* argv [], InputFlags& flags);
 std::vector<std::string> split(const std::string &str, char delimiter);
 void print_byte_to_strings(int nb);
 UINT get_kmer_len(const std::string& arg);
@@ -51,14 +48,20 @@ static struct option long_options[] = {
     {"draft", required_argument, NULL, 'd'},
     {"size-ref", required_argument, NULL, 's'},
     {"coverage-short", required_argument, NULL, 'c'},
-    {"coverage-long", required_argument, NULL, 'C'},
     {"bam-sr", required_argument, NULL, 'b'},
     {"bam-lr", required_argument, NULL, 'B'},
     {"output", required_argument, NULL, 'o'},
     {"threads", required_argument, NULL, 't'},
     {"processing-size", required_argument, NULL, 'p'},
     {"kind-sr", required_argument, NULL, 'k'},
-    {"wdir", required_argument, NULL, 'w'},
+    {"match-sr", required_argument, NULL, 'm'},
+    {"mismatch-sr", required_argument, NULL, 'x'},
+    {"gap-sr", required_argument, NULL, 'g'},
+    {"match-lr", required_argument, NULL, 'M'},
+    {"mismatch-lr", required_argument, NULL, 'X'},
+    {"gap-lr", required_argument, NULL, 'G'},
+    {"qual-map-th", required_argument, NULL, 'q'},
+    {"ned-th", required_argument, NULL, 'n'},
     {"intermed", no_argument, NULL, 'i'},
     {"help", no_argument, NULL, 'h'},
     {NULL, 0, NULL, 0}};
@@ -79,54 +82,53 @@ inline bool create_dir (const std::string& name) {
 
 /** Define various settings as globals
   */
-const SRSettings Sr_settings = {5u,0.8};
+const SRSettings Sr_settings = {5u,0.4};
 const MinimizerSettings Minimizer_settings = {10u,10u,5u,0.8,0x000000u,0x055555u,0x0aaaaau,0x0fffffu};
 WindowSettings Window_settings = {100u,500u,80u};
-//WindowCovSettings SWindow_cov_settings = {50u,1.4,70};
-WindowCovSettings SWindow_cov_settings = {50u,1.2,0.3,70,30};
-WindowCovSettings LWindow_cov_settings = {50u,1.4,0.1,70,30};
-FilteringSettings Filtering_settings = {0.1, 1000u};
-//const ArmsSettings Arms_settings = {3u,20u,5u,10u,10u,0.4,10u,20u,10u,2u,0.4};
-const ArmsSettings Arms_settings = {3u,10u,5u,10u,10u,0.3,10u,20u,20u,2u,0.4};
+const ArmsSettings Arms_settings = {3u,20u,5u,10u,10u,0.4,10u};
 
 
 /** Decode the input flags
    */
-void decodeFlags(int argc, char *argv[], InputFlags &flags, FileNames& filenames)
+void decodeFlags(int argc, char *argv[], InputFlags &flags)
 {
+  
+  fprintf(stdout, "Input:");
+  for(int i = 0; i < argc; i++) fprintf(stdout, " %s", argv[i]);
+  fprintf(stdout, "\n");
+  
   int args = 0;
   int opt;
   std::string infile;
 
   std::string kind="sr";
-  filenames.lr_bam_filename = "";
-  filenames.sr_bam_filename = "";
-  filenames.output_filename = "";
-
-
-
+  flags.lr_bam_filename = "";
+  flags.score_params.sr_match_score = 5;
+  flags.score_params.sr_misMatch_score = -4;
+  flags.score_params.sr_gap_penalty = -8;
+  flags.score_params.lr_match_score = 3;
+  flags.score_params.lr_misMatch_score = -5;
+  flags.score_params.lr_gap_penalty = -4;
   flags.map_qual_th = 2;
-  flags.norm_edit_th = 30;
+  flags.norm_edit_th = 20;
   flags.threads = 1;
-  flags.processing_batch_size = 1;
+  flags.processing_batch_size = 0;
+  flags.output_filename = "";
   flags.intermed = false;
   flags.sz_in_gb = 12;
-  flags.wdir = "./";
 
   bool is_sr = false;
   bool is_draft = false;
   bool is_size = false;
-  bool is_scov = false;
-  bool is_lcov = false;
+  bool is_cov = false;
   bool is_bamsr = false;
-  bool is_bamlr = false;
+  bool is_cov_long = false;
+  bool is_lr = false;
   std::string given_sz;
   std::string cmd = "hypo ";
   std::string err_string = "";
-  std::string cv = "";
-  int cov = 0;
   /* initialisation */
-  while ((opt = getopt_long(argc, argv, "r:d:s:c:C:b:B:o:t:p:k:w:ihv", long_options,
+  while ((opt = getopt_long(argc, argv, "r:d:s:c:b:B:o:t:p:k:m:x:g:M:X:G:q:n:ihC:", long_options,
                             nullptr)) != -1)
   {
     switch (opt)
@@ -143,7 +145,7 @@ void decodeFlags(int argc, char *argv[], InputFlags &flags, FileNames& filenames
           }
           while(std::getline(sr_list,name)) {
             if (name.size()>0) {
-              filenames.sr_filenames.push_back(name);
+              flags.sr_filenames.push_back(name);
               if (!file_exists(name)) {
                 fprintf(stderr, "[Hypo::utils] Error: File Error: Reads file does not exist %s!\n",name.c_str());
                 exit(1);
@@ -152,7 +154,7 @@ void decodeFlags(int argc, char *argv[], InputFlags &flags, FileNames& filenames
         }
       }
       else {
-          filenames.sr_filenames.push_back(infile);
+          flags.sr_filenames.push_back(infile);
           if (!file_exists(infile)) {
             fprintf(stderr, "[Hypo::utils] Error: File Error: Reads file does not exist %s!\n",infile.c_str());
             exit(1);
@@ -163,9 +165,9 @@ void decodeFlags(int argc, char *argv[], InputFlags &flags, FileNames& filenames
       break;
     
     case 'd':
-      filenames.draft_filename = std::string(optarg);
-      if (!file_exists(filenames.draft_filename)) {
-        fprintf(stderr, "[Hypo::utils] Error: File Error: Draft file does not exist %s!\n",filenames.draft_filename.c_str());
+      flags.draft_filename = std::string(optarg);
+      if (!file_exists(flags.draft_filename)) {
+        fprintf(stderr, "[Hypo::utils] Error: File Error: Draft file does not exist %s!\n",flags.draft_filename.c_str());
         exit(1);
       }
       cmd += (" -d " + std::string(optarg));
@@ -186,55 +188,45 @@ void decodeFlags(int argc, char *argv[], InputFlags &flags, FileNames& filenames
         fprintf(stderr, "[Hypo::utils] Error: Arg Error: Coverage should be positive %d!\n",atoi(optarg));
         exit(1);
       }   
-      cov = atoi(optarg);
-      SWindow_cov_settings.mean_cov = cov;
-      SWindow_cov_settings.high_th = UINT16(std::ceil(SWindow_cov_settings.high_frac * cov));
-      SWindow_cov_settings.low_th = UINT16(std::ceil(SWindow_cov_settings.low_frac * cov));
+      flags.cov = atoi(optarg);
       cmd += (" -c " + std::string(optarg));
-      cv += (" SHORT: "+ std::to_string(SWindow_cov_settings.high_th)+" and " + std::to_string(SWindow_cov_settings.low_th));
-      is_scov = true;
+      is_cov = true;
       args++;
       break;
-
-    case 'C': 
-      if (atoi(optarg) <= 0 ) {
-        fprintf(stderr, "[Hypo::utils] Error: Arg Error: Coverage should be positive %d!\n",atoi(optarg));
-        exit(1);
-      }   
-      cov = atoi(optarg);
-      LWindow_cov_settings.mean_cov = cov;
-      LWindow_cov_settings.high_th = UINT16(std::ceil(LWindow_cov_settings.high_frac * cov));
-      LWindow_cov_settings.low_th = UINT16(std::ceil(LWindow_cov_settings.low_frac * cov));
-      cmd += (" -C " + std::string(optarg));
-      cv += (" LONG: "+ std::to_string(LWindow_cov_settings.high_th)+" and " + std::to_string(LWindow_cov_settings.low_th));
-      is_lcov = true;
-      args++;
-      break;
-
+    
     case 'b':
-      filenames.sr_bam_filename = std::string(optarg);
-      if (!file_exists(filenames.sr_bam_filename)) {
-        fprintf(stderr, "[Hypo::utils] Error: File Error: Short reads BAM file does not exist %s!\n",filenames.sr_bam_filename.c_str());
+      flags.sr_bam_filename = std::string(optarg);
+      if (!file_exists(flags.sr_bam_filename)) {
+        fprintf(stderr, "[Hypo::utils] Error: File Error: Short reads BAM file does not exist %s!\n",flags.sr_bam_filename.c_str());
         exit(1);
       }
       cmd += (" -b " + std::string(optarg));
       is_bamsr = true;
       args++;
       break;
-
+    case 'C': 
+      if (atoi(optarg) <= 0 ) {
+        fprintf(stderr, "[Hypo::utils] Error: Arg Error: Coverage should be positive %d!\n",atoi(optarg));
+        exit(1);
+      }   
+      flags.cov_long = atoi(optarg);
+      cmd += (" -c " + std::string(optarg));
+      is_cov_long = true;
+      args++;
+      break;
     case 'B':
-      filenames.lr_bam_filename = std::string(optarg);
-      if (!file_exists(filenames.lr_bam_filename)) {
-        fprintf(stderr, "[Hypo::utils] Error: File Error: Long reads BAM file does not exist %s!\n",filenames.lr_bam_filename.c_str());
+      flags.lr_bam_filename = std::string(optarg);
+      if (!file_exists(flags.lr_bam_filename)) {
+        fprintf(stderr, "[Hypo::utils] Error: File Error: Long reads BAM file does not exist %s!\n",flags.lr_bam_filename.c_str());
         exit(1);
       }
       cmd += (" -B " + std::string(optarg));
-      is_bamlr = true;
+      is_lr = true;
       args++;
       break;
 
     case 'o':
-      filenames.output_filename = std::string(optarg);
+      flags.output_filename = std::string(optarg);
       cmd += (" -o " + std::string(optarg));
       args++;
       break;
@@ -242,6 +234,63 @@ void decodeFlags(int argc, char *argv[], InputFlags &flags, FileNames& filenames
     case 'k':
       kind = std::string(optarg);
       cmd += (" -k " + kind);
+      args++;
+      break;
+
+    case 'm':
+      flags.score_params.sr_match_score = atoi(optarg);
+      cmd += (" -m " + std::string(optarg));
+      args++;
+      break;
+    case 'x':
+      flags.score_params.sr_misMatch_score = atoi(optarg);
+      cmd += (" -x " + std::string(optarg));
+      args++;
+      break;
+    case 'g':
+      if (atoi(optarg) >= 0 ) {
+        fprintf(stderr, "[Hypo::utils] Error: Arg Error: Gap penalty (g) must be negative %d!\n",atoi(optarg));
+        exit(1);
+      } 
+      flags.score_params.sr_gap_penalty = atoi(optarg);
+      cmd += (" -g " + std::string(optarg));
+      args++;
+      break;
+    case 'M':
+      flags.score_params.lr_match_score = atoi(optarg);
+      cmd += (" -M " + std::string(optarg));
+      args++;
+      break;
+    case 'X':
+      flags.score_params.lr_misMatch_score = atoi(optarg);
+      cmd += (" -X " + std::string(optarg));
+      args++;
+      break;
+    case 'G':
+      if (atoi(optarg) >= 0 ) {
+        fprintf(stderr, "[Hypo::utils] Error: Arg Error: Gap penalty (G) must be negative %d!\n",atoi(optarg));
+        exit(1);
+      }
+      flags.score_params.lr_gap_penalty = atoi(optarg);
+      cmd += (" -G " + std::string(optarg));
+      args++;
+      break;
+    case 'q':
+      if (atoi(optarg) < 0 ) {
+        fprintf(stderr, "[Hypo::utils] Error: Arg Error: Mapping quality threshold (q) must NOT be negative %d!\n",atoi(optarg));
+        exit(1);
+      }
+      flags.map_qual_th = atoi(optarg);
+      cmd += (" -q " + std::string(optarg));
+      args++;
+      break;
+    case 'n':
+      if (atoi(optarg) < 0) {
+        fprintf(stderr, "[Hypo::utils] Error: Arg Error: Normalised Edit Distance Threshold (n) must NOT be negative %d!\n",atoi(optarg));
+        exit(1);
+      }
+      flags.norm_edit_th = atoi(optarg);
+      cmd += (" -n " + std::string(optarg));
       args++;
       break;
     case 't':
@@ -255,7 +304,7 @@ void decodeFlags(int argc, char *argv[], InputFlags &flags, FileNames& filenames
       args++;
       break;
     case 'p':
-      if (atoi(optarg) < 0) {
+      if (atoi(optarg) <= 0) {
         fprintf(stderr, "[Hypo::utils] Error: Arg Error: Processing-size, i.e. number of contigs processed in a batch, (p) must NOT be negative %d!\n",atoi(optarg));
         exit(1);
       }
@@ -267,67 +316,34 @@ void decodeFlags(int argc, char *argv[], InputFlags &flags, FileNames& filenames
       flags.intermed=true;
       cmd += (" -i ");
       break;
-    case 'w':
-      flags.wdir = (std::string(optarg)+"/");
-      if (!file_exists(flags.wdir)) {
-        fprintf(stderr, "[Hypo::utils] Error: Directory Error: Working directory does not exist %s!\n",flags.wdir.c_str());
-        exit(1);
-      }
-      cmd += (" -w " + std::string(optarg));
-      break;
     default:
       usage();
       exit(0);
     }
   }
   // TODO: Check if the int args conform to the assumpions
-  bool is_complete = false;
-  std::string mode = "";
-  if (is_draft && is_size) {
-      if (is_bamlr && is_lcov) { // Long reads alignment
-        is_complete = true;
-        if (is_sr && is_scov) { // Long + short 
-          if (is_bamsr) {
-            flags.mode = Mode::LSA;
-            mode = "LONG + SHORT (Using initial alignments)";
-            flags.intermed = true;
-          }
-          else {
-            flags.mode = Mode::LO;
-            mode = "LONG ONLY";
-          }
-        }
-        else { // Long read only          
-          flags.mode = Mode::LO;
-          mode = "LONG ONLY";
-        }
-    }
-    else { // short reads only
-      if (is_sr && is_scov && is_bamsr) {
-        is_complete = true;
-        flags.mode = Mode::SO;
-        mode = "SHORT ONLY";
-      }
-    }
-  }
-  if (is_complete) {
+  
+  if (is_sr && is_draft && is_size && is_bamsr && is_cov && is_cov_long && is_lr)
+  {
+    // Set window settings
+    void set_kind(const std::string& kind);
+    // Set expected short reads file size
+    flags.sz_in_gb = get_expected_file_sz(given_sz,flags.cov);
+
     // Set output name
-    if (filenames.output_filename == "") {
-      size_t ind = filenames.draft_filename.find_last_of("(/\\");
-      std::string dfullname (filenames.draft_filename,ind + 1);
+    if (flags.output_filename == "") {
+      size_t ind = flags.draft_filename.find_last_of("(/\\");
+      std::string dfullname (flags.draft_filename,ind + 1);
       ind = dfullname.find_last_of(".");
       std::string dname(dfullname,0,ind);
-      filenames.output_filename = "hypo_" + dname + ".fasta";
+      flags.output_filename = "hypo_" + dname + ".fasta";
     }
-    fprintf(stdout, "[Hypo::Utils] Info: Given Command: %s.\n",cmd.c_str()); 
-    fprintf(stdout, "[Hypo::Utils] Info: Operating Mode: %s.\n",mode.c_str());
-    fprintf(stdout, "[Hypo::Utils] Info: High and Low Coverage thresholds: %s.\n",cv.c_str()); 
+    fprintf(stdout, "Given Command: %s.\n",cmd.c_str()); 
     // Set stage to start from  
-    create_dir(flags.wdir+AUX_DIR);
-    create_dir(flags.wdir+SR_DIR);
+    create_dir(AUX_DIR);
     if (flags.intermed) {  
-      if (file_exists(flags.wdir+STAGEFILE)) {
-        std::ifstream ifs(flags.wdir+STAGEFILE);
+      if (file_exists(STAGEFILE)) {
+        std::ifstream ifs(STAGEFILE);
         if (!ifs.is_open()) {
           fprintf(stderr, "[Hypo::Utils] Error: File open error: Stage File (%s) exists but could not be opened!\n",STAGEFILE);
           exit(1);
@@ -336,6 +352,8 @@ void decodeFlags(int argc, char *argv[], InputFlags &flags, FileNames& filenames
         UINT stage_num=STAGE_BEG;
         while (ifs >> dummy1 >> dummy2 >> dummy3 >> stage_num){}
         flags.done_stage = stage_num;
+        std::cout << "Stagenum found is " << stage_num <<std::endl;
+        // TODO: Check whether all files required for later stages are present
       }
       else {
         flags.done_stage = STAGE_BEG;
@@ -354,14 +372,6 @@ void decodeFlags(int argc, char *argv[], InputFlags &flags, FileNames& filenames
     usage();
     exit(1);
   }
-  
-  if (flags.mode==Mode::LSA || flags.mode==Mode::SO)
-  {
-    // Set window settings
-    void set_kind(const std::string& kind);
-    // Set expected short reads file size
-    flags.sz_in_gb = get_expected_file_sz(given_sz,SWindow_cov_settings.mean_cov); 
-  }
 }
 
 /*
@@ -369,49 +379,35 @@ void decodeFlags(int argc, char *argv[], InputFlags &flags, FileNames& filenames
    */
 void usage(void)
 {
-  std::cout << "\n Hypo Version:"<<VERSION<< "\n\n";
-  std::cout << "\n Usage: ./hypo <args>\n\n";
-  std::cout << " ****** Mandatory args:\n";
+  std::cout << "\n Usage: hypo <args>\n\n";
+  std::cout << " ** Mandatory args:\n";
+  std::cout << "\t-r, --reads-short <str>\n"
+            << "\tInput file name containing reads (in fasta/fastq format; can be compressed). "
+            << "A list of files containing file names in each line can be passed with @ prefix.\n\n";
   std::cout << "\t-d, --draft <str>\n"
             << "\tInput file name containing the draft contigs (in fasta/fastq format; can be compressed). \n\n";
+  std::cout << "\t-b, --bam-sr <str>\n"
+            << "\tInput file name containing the alignments of short reads against the draft (in bam/sam format; must have CIGAR information). \n\n";
+  std::cout << "\t-c, --coverage-short <int>\n"
+            << "\tApproximate mean coverage of the short reads. \n\n";
   std::cout << "\t-s, --size-ref <str>\n"
             << "\tApproximate size of the genome (a number; could be followed by units k/m/g; e.g. 10m, 2.3g). \n\n\n";
 
-  std::cout << " ****** Mode dependent (mandatory) args (Mode will be selected based on the given arguments):\n";
-  std::cout << " ** Long Only Mode (LO):\n";
+
+  std::cout << " ** Optional args:\n";
   std::cout << "\t-B, --bam-lr <str>\n"
-            << "\tInput file name containing the alignments of long reads against the draft (in bam/sam format; must have CIGAR information). \n";
+            << "\tInput file name containing the alignments of long reads against the draft (in bam/sam format; must have CIGAR information). \n"
+            << "\t[Only Short reads polishing will be performed if this argument is not given]\n\n";
+  std::cout << "\t-o, --output <str>\n"
+            << "\tOutput file name. \n"
+            << "\t[Default] hypo_<draft_file_name>.fasta in the working directory.\n\n ";
 
-  std::cout << "\t-C, --coverage-long <int>\n"
-            << "\tApproximate mean coverage of the long reads. \n\n";
-
-  std::cout << " ** Short Only Mode (SO):\n";
-  std::cout << "\t-r, --reads-short <str>\n"
-            << "\tInput file name containing reads (in fasta/fastq format; can be compressed). "
-            << "\t\tA list of files containing file names in each line can be passed with @ prefix.\n"
-            << "\t\tIn the list of files containing file names (passed with @ prefix), first line contains R1 of paired-end reads and the second line contina the name of R2.\n";
-  std::cout << "\t-b, --bam-sr <str>\n"
-            << "\tInput file name containing the alignments of short reads against the draft (in bam/sam format; must have CIGAR information). \n";
-  std::cout << "\t-c, --coverage-short <int>\n"
-            << "\tApproximate mean coverage of the short reads. \n\n";
-
-  std::cout << " ** LONG + SHORT Mode (LSA):\n";
-  std::cout << "\t-B, --bam-lr <str>\n"
-            << "\tInput file name containing the alignments of long reads against the draft (in bam/sam format; must have CIGAR information). \n";
-  std::cout << "\t-C, --coverage-long <int>\n"
-            << "\tApproximate mean coverage of the long reads. \n";
-  std::cout << "\t-r, --reads-short <str>\n"
-            << "\tInput file name containing reads (in fasta/fastq format; can be compressed).\n "
-            << "\t\tA list of files containing file names in each line can be passed with @ prefix.\n"
-            << "\t\tIn the list of files containing file names (passed with @ prefix), first line contains R1 of paired-end reads and the second line contina the name of R2.\n";
-  std::cout << "\t-b, --bam-sr <str>\n"
-            << "\tInput file name containing the alignments of short reads against the draft (in bam/sam format; must have CIGAR information). \n";
-  std::cout << "\t-c, --coverage-short <int>\n"
-            << "\tApproximate mean coverage of the short reads. \n\n";
-
-  std::cout << " ****** Optional args:\n";
-
-  std::cout << " ** Short reads related (used in SO, LSA modes):\n";
+  std::cout << "\t-t, --threads <int>\n"
+            << "\tNumber of threads. \n"
+            << "\t[Default] 1.\n\n ";
+  std::cout << "\t-p, --processing-size <int>\n"
+            << "\tNumber of contigs to be processed in one batch. Lower value means less memory usage but slower speed. \n"
+            << "\t[Default] All the contigs in the draft.\n\n ";
   std::cout << "\t-k, --kind-sr <str>\n"
             << "\tKind of the short reads. \n"
             << "\t[Valid Values] \n"
@@ -419,26 +415,33 @@ void usage(void)
             << "\t\tccs\t(Corresponding to HiFi reads like PacBio CCS reads) \n"
             << "\t[Default] sr.\n\n ";
 
-  std::cout << " ** Output related:\n";
-  std::cout << "\t-o, --output <str>\n"
-            << "\tOutput file name. \n"
-            << "\t[Default] hypo_<draft_file_name>.fasta in the working directory.\n ";
+  std::cout << "\t-m, --match-sr <int>\n"
+            << "\tScore for matching bases for short reads. \n"
+            << "\t[Default] 5.\n\n ";
+  std::cout << "\t-x, --mismatch-sr <int>\n"
+            << "\tScore for mismatching bases for short reads. \n"
+            << "\t[Default] -4.\n\n ";
+  std::cout << "\t-g, --gap-sr <int>\n"
+            << "\tGap penalty for short reads (must be negative). \n"
+            << "\t[Default] -8.\n\n ";
+  std::cout << "\t-M, --match-lr <int>\n"
+            << "\tScore for matching bases for long reads. \n"
+            << "\t[Default] 3.\n\n ";
+  std::cout << "\t-X, --mismatch-lr <int>\n"
+            << "\tScore for mismatching bases for long reads. \n"
+            << "\t[Default] -5.\n\n ";
+  std::cout << "\t-G, --gap-lr <int>\n"
+            << "\tGap penalty for long reads (must be negative). \n"
+            << "\t[Default] -4.\n\n ";
+  std::cout << "\t-n, --ned-th <int>\n"
+            << "\tThreshold for Normalised Edit Distance of long arms allowed in a window (in %). Higher number means more arms allowed which may slow down the execution.\n"
+            << "\t[Default] 20.\n\n ";
+  std::cout << "\t-q, --qual-map-th <int>\n"
+            << "\tThreshold for mapping quality of reads. The reads with mapping quality below this threshold will not be taken into consideration. \n"
+            << "\t[Default] 2.\n\n ";
   std::cout << "\t-i, --intermed\n"
-            << "\tStore or use (if already exist) the intermediate files in the working directory. \n"
-            << "\t[Currently, only Solid kmers are stored as an intermediate file.].\n "
-            << "\t[Always Set for LSA mode; Not useful for LO mode; Setting/unsetting only affects SO mode.].\n\n ";
-  std::cout << "\t-w, --wdir <str>\n"
-            << "\tPath to working directory. \n"
-            << "\t[Default] Present Working Directory (.).\n\n ";
-  
-  std::cout << " ** Processing related:\n";
-  std::cout << "\t-t, --threads <int>\n"
-            << "\tNumber of threads. \n"
-            << "\t[Default] 1.\n\n ";
-  std::cout << "\t-p, --processing-size <int>\n"
-            << "\tNumber of contigs to be processed in one batch. Lower value means less memory usage. \n"
-            << "\t[Default] One contig.\n\n ";
-    
+            << "\tStore or use (if already exist) the intermediate files. \n"
+            << "\t[Currently, only Solid kmers are stored as an intermediate file.].\n\n ";
   std::cout << "\t-h, --help\n"
             << "\tPrint the usage. \n\n";
 }
@@ -602,87 +605,12 @@ void set_kind(const std::string& kind) {
 } // end namespace
 
 int main(int argc, char **argv) {
-    
-  
-    fprintf(stdout, "Command: ");
-    for(int i = 0; i < argc; i++) fprintf(stdout, "%s ", argv[i]);
-    fprintf(stdout, "\n");  
-      
-  slog::Monitor monitor;
+
   /* Decode arguments */
   hypo::InputFlags flags;
-  hypo::FileNames filenames;
-  hypo::decodeFlags(argc, argv, flags, filenames);
+  hypo::decodeFlags(argc, argv, flags);
 
-  hypo::Mode mode = flags.mode; 
   hypo::Hypo hypo(flags);
-  monitor.start();
-  std::string tm="";
-  if (mode==hypo::Mode::LSA) {
-    // Call first round of polishing using short reads/aln
-    std::string orignal_out_name = filenames.output_filename;
-    std::string first_out_name = (orignal_out_name+".0.fasta");
-    filenames.output_filename = first_out_name;
-    
-    if (flags.done_stage < STAGE_FIRST) {
-      hypo.polish(mode, filenames);
-      flags.done_stage = STAGE_FIRST;
-    }
-    
-    tm = monitor.stop("[Hypo:main]: First round. ");
-    fprintf(stdout, "[Hypo::main] //////////////////\n FIRST ROUND POLISHING DONE\n [Hypo::Hypo] ////////////////// \n%s\n", tm.c_str());
-
-    // Map short reads to long read polished draft.
-    // IT IS SAFE TO RUN SYSTEM AS USER-GIVEN ARGS ARE ALREADY SANITISED
-    monitor.start();
-    std::string sf_name (flags.wdir+SBAMFILE);
-    std::string numth = std::to_string(flags.threads);
-
-    std::string rn_file = "";
-    if (filenames.sr_filenames.size()==2) { // R1 nd R2  
-      fprintf(stdout, "[Hypo::main] Assuming Paired end reads with R1 as %s and R2 as %s \n", filenames.sr_filenames[0].c_str(), filenames.sr_filenames[1].c_str());
-      rn_file = filenames.sr_filenames[0]+" "+filenames.sr_filenames[1];
-    }
-    else {
-      rn_file = filenames.sr_filenames[0];
-    }
-
-    std::string aln_cmd = "minimap2 --MD -ax sr --secondary=no -t ";
-    aln_cmd += (numth + " " + first_out_name) + " " + rn_file;
-
-    std::string sam_cmd = ("samtools view -@ " + numth + " -Sb - | samtools sort -@" + numth + " -m 2g -o " + sf_name + " -");
-    
-    if (flags.done_stage < STAGE_REMAP) {
-      std::string final_cmd = aln_cmd + " | " + sam_cmd;
-      fprintf(stdout, "[Hypo::main] Following re-aligns the reads \n%s \n", final_cmd.c_str());
-      auto status = system(final_cmd.c_str());
-      if(!WIFEXITED(status)) {
-          fprintf(stderr, "[Hypo::main] Error: Failed to run minimap2/samtools.\n");
-          exit(1);
-      }
-    }
-    if (!hypo::file_exists(sf_name)) {
-        fprintf(stderr, "[Hypo::main] Error: File Error: (Intermediate) Short reads BAM file does not exist %s!\n",sf_name.c_str());
-        exit(1);
-    }
-    tm = monitor.stop("[Hypo:main]: Mapping. ");
-    fprintf(stdout, "[Hypo::main] //////////////////\n MAPPING SELECTIVE SHORT READS ONTO FIRST ROUND POLISHED DRAFT DONE\n [Hypo::Hypo] ////////////////// \n%s\n", tm.c_str());
-
-    // Call second round of polishing using short reads only
-    monitor.start();
-    filenames.sr_bam_filename = sf_name;
-    filenames.lr_bam_filename = "";
-    filenames.draft_filename = first_out_name;
-    filenames.output_filename = orignal_out_name;
-    hypo.polish(hypo::Mode::SECOND,filenames);
-    tm = monitor.stop("[Hypo:main]: Short round. ");
-    fprintf(stdout, "[Hypo::Hypo] //////////////////\n FINAL POLISHING DONE\n [Hypo::Hypo] ////////////////// \n%s\n", tm.c_str());
-  }
-  else {
-    hypo::Hypo hypo(flags);
-    hypo.polish(mode,filenames);
-  }
-  monitor.total("[Hypo:main]: TOTAL (Combined). ");
+  hypo.polish();
   return 0;
 }
-

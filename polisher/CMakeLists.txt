@@ -9,13 +9,15 @@ if(CMAKE_BUILD_TYPE MATCHES Debug)
     message("Debug mode")
 endif()
 
-option(optimise_for_native "Build with -march=native" ON)
+option(optimise_for_native "Build with -march=native" OFF)
 
 if(optimise_for_native)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -pedantic -O3 -march=native")
 else()
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -pedantic -O3")
 endif()
+
+
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -30,6 +32,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(SOURCES 
     ${PROJECT_SOURCE_DIR}/include/Alignment.hpp
     ${PROJECT_SOURCE_DIR}/include/Contig.hpp
+    ${PROJECT_SOURCE_DIR}/include/Filter.hpp
     ${PROJECT_SOURCE_DIR}/include/globalDefs.hpp
     ${PROJECT_SOURCE_DIR}/include/Hypo.hpp
     ${PROJECT_SOURCE_DIR}/include/kseq.h
@@ -37,6 +40,7 @@ set(SOURCES
     ${PROJECT_SOURCE_DIR}/include/PackedSeq.hpp
     ${PROJECT_SOURCE_DIR}/include/Window.hpp
     ${PROJECT_SOURCE_DIR}/src/Alignment.cpp
+    ${PROJECT_SOURCE_DIR}/src/Contig.cpp
     ${PROJECT_SOURCE_DIR}/src/Contig.cpp
     ${PROJECT_SOURCE_DIR}/src/Hypo.cpp
     ${PROJECT_SOURCE_DIR}/src/main.cpp
@@ -122,11 +126,11 @@ if (NOT TARGET slog)
     add_subdirectory(external/slog EXCLUDE_FROM_ALL)
 endif() 
 
-if (NOT TARGET sw_wrapper)
-    add_subdirectory(external/minimap2_SW_wrapper EXCLUDE_FROM_ALL)
-endif() 
-
 # This maybe needed for filesystem: target_link_libraries
 #target_link_libraries(hypo PRIVATE spoa pthread sdsl suk slog ${ZLIB_LIBRARIES} ${HTS} OpenMP::OpenMP_CXX "stdc++fs")
-target_link_libraries(hypo PRIVATE spoa pthread sdsl suk slog ${ZLIB_LIBRARIES} ${HTS} OpenMP::OpenMP_CXX sw_wrapper kalloc ksw2_extd2_sse41 ksw2_extd2_sse2)
+target_link_libraries(hypo PRIVATE spoa pthread sdsl suk slog ${ZLIB_LIBRARIES} ${HTS} OpenMP::OpenMP_CXX)
 install(TARGETS hypo DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+
+
+

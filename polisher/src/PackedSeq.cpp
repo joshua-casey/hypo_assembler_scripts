@@ -289,18 +289,15 @@ bool PackedSeq<NB>::check_kmer(const UINT64 target_kmer, const UINT k, const siz
 }
 
 template <int NB>
-bool PackedSeq<NB>::find_kmer(const UINT64 target_kmer, const UINT k, const size_t left_ind, const size_t right_ind, const size_t expected_pos, const bool is_first, size_t& result)const {
+bool PackedSeq<NB>::find_kmer(const UINT64 target_kmer, const UINT k, const size_t left_ind, const size_t right_ind, const bool is_first, size_t& result)const {
     // Assumes kmer is based on 2-bit packing
     //std::cout << "L : R: S " << left_ind << " " << right_ind << " " << get_seq_size() <<std::endl;
     assert(right_ind <= get_seq_size() && left_ind<=right_ind);
     if (left_ind==right_ind) {return false;}
-    // Result will be the pos closest to expected position; if left and right equidistant from expected, use left/right as per is_first(true/false)
     UINT64 kmer=0;
     UINT kmer_len=0;
     const UINT64 kmask = (1ULL<<2*k) - 1;
     bool found = false;
-    int left_dist = -1;
-    int right_dist = -1;
     for (size_t i=left_ind; i < right_ind; ++i) {
         BYTE b = enc_base_at(i);
         if (b < 4) { //ACGT
@@ -312,34 +309,11 @@ bool PackedSeq<NB>::find_kmer(const UINT64 target_kmer, const UINT k, const size
             kmer=0;
         }
         if (kmer_len==k && kmer==target_kmer) { //found
+            result = i-k+1;
             found = true;
-            size_t kmer_start = i-k+1;
-            if (kmer_start<=expected_pos) {
-                left_dist = expected_pos - kmer_start;
-            }
-            else { // past expected
-                right_dist = kmer_start - expected_pos;
+            if (is_first) {
                 break;
             }
-        }
-    }
-    if (found) { // at least one kmer pos
-        if (left_dist > -1 && right_dist > -1) { // both kmers
-            if (left_dist<right_dist) {
-                result = expected_pos - left_dist;
-            }
-            else if (left_dist>right_dist) {
-                result = expected_pos + right_dist;
-            }
-            else { // both equal
-                result = (is_first) ? (expected_pos - left_dist) : (expected_pos + right_dist);
-            }
-        }
-        else if (left_dist > -1) { // only left
-            result = expected_pos - left_dist;
-        }
-        else { // only right
-            result = expected_pos + right_dist;
         }
     }
     return found;

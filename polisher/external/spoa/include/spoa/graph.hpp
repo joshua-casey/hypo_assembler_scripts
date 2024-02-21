@@ -12,9 +12,6 @@
 #include <vector>
 #include <utility>
 #include <unordered_set>
-#include <set>
-#include <iostream>
-#include <queue>
 
 namespace spoa {
 
@@ -29,7 +26,6 @@ using Alignment = std::vector<std::pair<std::int32_t, std::int32_t>>;
 class Graph {
 public:
     ~Graph();
-    std::set<std::uint32_t> labels_of_first_css_;
 
     const std::vector<std::unique_ptr<Node>>& nodes() const {
         return nodes_;
@@ -70,35 +66,21 @@ public:
     void add_alignment(const Alignment& alignment, const char* sequence,
         std::uint32_t sequence_size, const std::vector<std::uint32_t>& weights);
 
-    // Reurns Coverage of the position (Not base support)
     void generate_multiple_sequence_alignment(std::vector<std::string>& dst,
         bool include_consensus = false);
 
     // RITU: Returns draft and consensus alignment
-    void generate_multiple_sequence_alignment_custom(std::vector<std::string>& msa);
+    void generate_multiple_sequence_alignment_custom(const std::vector<uint32_t>& interesting,std::vector<std::string>& msa);
 
-
-    std::pair<std::string, std::string> generate_consensus(double support_fraction);
 
     std::string generate_consensus();
-
-    // RITU: My custom consensus generator that gives count of the base (base support) in the consensus
-    std::string generate_consensus_custom(std::vector<uint32_t>& dst);
-    std::string generate_consensus_custom2(const std::vector<uint32_t>& interesting,std::vector<uint32_t>& dst);
-
-    std::pair<std::string, std::string> find_consensus(double support_fraction);
-
-    std::string find_consensus();
-
-    void merge_homopolymers();
-
-    void generate_multiple_consensus(double threshold, std::vector<std::string>& all_consensuses);
-    
-    void generate_multiple_consensus_new(double ratio_threshold, int constant_threshold, std::vector<std::string>& all_consensuses);
-
     // returns  base coverages or complete summary matrix if verbose equals true
     std::string generate_consensus(std::vector<std::uint32_t>& dst,
         bool verbose = false);
+
+    // RITU: My custom consensus generator that gives count of the base in the consensus
+    std::string generate_consensus_custom(std::vector<uint32_t>& dst);
+    std::string generate_consensus_custom2(const std::vector<uint32_t>& interesting,std::vector<uint32_t>& dst);
 
     std::unique_ptr<Graph> subgraph(std::uint32_t begin_node_id,
         std::uint32_t end_node_id,
@@ -128,10 +110,7 @@ private:
     void add_edge(std::uint32_t begin_node_id, std::uint32_t end_node_id,
         std::uint32_t weight);
 
-    void add_edge(std::uint32_t begin_node_id, std::uint32_t end_node_id,
-        std::uint32_t weight, std::uint32_t sequence_label);
-
-    std::pair<std::int32_t, std::int32_t> add_sequence(const char* sequence,
+    std::int32_t add_sequence(const char* sequence,
         const std::vector<std::uint32_t>& weights, std::uint32_t begin,
         std::uint32_t end);
 
@@ -139,17 +118,7 @@ private:
 
     bool is_topologically_sorted() const;
 
-    std::int32_t traverse_heaviest_bundle();
-    void traverse_heaviest_bundle_orig();
-    
-    
-    std::int32_t traverse_heaviest_bundle_new(const std::set<std::uint32_t> & included_labels, std::set<std::uint32_t> & bottleneck_labels);
-    void recursive_consensus(const double ratio_threshold, const int constant_threshold, const std::set<std::uint32_t> & enabled_reads, std::unordered_set<std::string> & result_consensus);
-
-    void convert_to_adjacent_list(std::vector<std::vector<std::pair<std::uint32_t, std::int32_t>>>& adj_list);
-
-    std::int32_t dijsktra(std::uint32_t source, std::uint32_t destination,
-        std::vector<std::vector<std::pair<std::uint32_t, std::int32_t>>>& adj_list);
+    void traverse_heaviest_bundle();
 
     std::uint32_t branch_completion(std::vector<std::int64_t>& scores,
         std::vector<std::int32_t>& predecessors,
@@ -168,9 +137,7 @@ private:
     std::vector<std::unique_ptr<Node>> nodes_;
     std::vector<std::uint32_t> rank_to_node_id_;
     std::vector<std::uint32_t> sequences_begin_nodes_ids_;
-    std::vector<std::uint32_t> sequences_end_nodes_ids_;
     std::vector<std::uint32_t> consensus_;
-    std::set<std::uint32_t> exclude_labels_;
 };
 
 class Node {
@@ -185,7 +152,6 @@ public:
         return code_;
     }
 
-
     const std::vector<std::shared_ptr<Edge>>& in_edges() const {
         return in_edges_;
     }
@@ -198,15 +164,9 @@ public:
         return aligned_nodes_ids_;
     }
 
-    std::uint32_t coverage() const {
-        return get_associated_labels().size();
-    }
-
     bool successor(std::uint32_t& dst, std::uint32_t label) const;
 
-    std::set<std::uint32_t> get_associated_labels() const;
-
-    std::shared_ptr<Edge> get_edge(std::uint32_t end_id, bool is_outgoing_edge) const;
+    std::uint32_t coverage() const;
 
     friend Graph;
 
