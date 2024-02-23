@@ -25,22 +25,40 @@ def error_assessment(args):
         os.makedirs(error_workdir)
     
     # Run minimap2 for evaluation
+    
+    
         
-    f = open(os.path.join(error_workdir, "asm1_p.paf"), "w")
-    minimap2_run = subprocess.run(["minimap2", "-cx", "asm5", "-t", str(args.threads), args.paternal, args.assembly1], check=True, stdout=f)
-    f.close()
+    path = os.path.join(error_workdir, "asm1_p.paf")
+    if os.path.isfile(path):
+        print("Opening file from", path)
+    else:
+        f = open(path, "w")
+        minimap2_run = subprocess.run(["minimap2", "-cx", "asm5", "-t", str(args.threads), args.paternal, args.assembly1], check=True, stdout=f)
+        f.close()
     
-    f = open(os.path.join(error_workdir, "asm1_m.paf"), "w")
-    minimap2_run = subprocess.run(["minimap2", "-cx", "asm5", "-t", str(args.threads), args.maternal, args.assembly1], check=True, stdout=f)
-    f.close()
+    path = os.path.join(error_workdir, "asm1_m.paf")
+    if os.path.isfile(path):
+        print("Opening file from", path)
+    else:
+        f = open(path, "w")
+        minimap2_run = subprocess.run(["minimap2", "-cx", "asm5", "-t", str(args.threads), args.maternal, args.assembly1], check=True, stdout=f)
+        f.close()
     
-    f = open(os.path.join(error_workdir, "asm2_p.paf"), "w")
-    minimap2_run = subprocess.run(["minimap2", "-cx", "asm5", "-t", str(args.threads), args.paternal, args.assembly2], check=True, stdout=f)
-    f.close()
+    path = os.path.join(error_workdir, "asm2_p.paf")
+    if os.path.isfile(path):
+        print("Opening file from", path)
+    else:
+        f = open(path, "w")
+        minimap2_run = subprocess.run(["minimap2", "-cx", "asm5", "-t", str(args.threads), args.paternal, args.assembly2], check=True, stdout=f)
+        f.close()
     
-    f = open(os.path.join(error_workdir, "asm2_m.paf"), "w")
-    minimap2_run = subprocess.run(["minimap2", "-cx", "asm5", "-t", str(args.threads), args.maternal, args.assembly2], check=True, stdout=f)
-    f.close()
+    path = os.path.join(error_workdir, "asm2_m.paf")
+    if os.path.isfile(path):
+        print("Opening file from", path)
+    else:
+        f = open(path, "w")
+        minimap2_run = subprocess.run(["minimap2", "-cx", "asm5", "-t", str(args.threads), args.maternal, args.assembly2], check=True, stdout=f)
+        f.close()
     
     # Scan files for evaluation
     
@@ -90,6 +108,7 @@ def error_assessment(args):
                 sum_len += contig_to_score_m[ctg][1]
     
     print("Assembly 1 accuracy is: %.5f%%" % (100*(sum_len - sum_nm) / sum_len))
+    print("Assembly 1 errors are: %.5f per 1kbp" % (1000 * sum_nm / sum_len))
     
     f = open(os.path.join(error_workdir, "asm2_p.paf"))
     contig_to_score = {}
@@ -137,6 +156,7 @@ def error_assessment(args):
                 sum_len += contig_to_score_m[ctg][1]
     
     print("Assembly 2 accuracy is: %.5f%%" % (100*(sum_len - sum_nm) / sum_len))
+    print("Assembly 2 errors are: %.5f per 1kbp" % (1000 * sum_nm / sum_len))
 
 def haplotype_assessment():
     pass
