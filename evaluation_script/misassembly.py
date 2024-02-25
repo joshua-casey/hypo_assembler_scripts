@@ -192,7 +192,7 @@ for contig_name in mis_by_contigs:
 output_mis.close()
 
 count_mis_2 = 0
-print("Writing filtered misassemblies (contig 1) to", sys.argv[8])
+print("Writing filtered misassemblies (contig 2) to", sys.argv[8])
 output_mis = open(sys.argv[8], "w")
 for contig_name in mis_by_contigs:
     for s, e in mis_by_contigs_filtered_2[contig_name]:
@@ -201,4 +201,4 @@ for contig_name in mis_by_contigs:
 output_mis.close()
 
 print("Number of misassemblies (contig 1): %d" % count_mis)
-print("Number of misassemblies (contig 1): %d" % count_mis_2)
+print("Number of misassemblies (contig 2): %d" % count_mis_2)

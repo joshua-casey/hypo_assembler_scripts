@@ -310,7 +310,9 @@ def error_assessment(args):
     if args.maternal is None:
         print("-m or --maternal is needed for diploid error evaluation.")
         exit(1)
-        
+    
+    asm1name = os.sep.split(args.assembly1)[-1]
+    asm2name = os.sep.split(args.assembly2)[-1]
     
     if not os.path.exists(args.workdir):
         os.makedirs(args.workdir)
@@ -320,7 +322,7 @@ def error_assessment(args):
         os.makedirs(error_workdir)
     
     # Run minimap2 for evaluation
-    path = os.path.join(error_workdir, "asm1_p.paf")
+    path = os.path.join(error_workdir, asm1name, "asm1_p.paf")
     if os.path.isfile(path):
         print("Opening file from", path, flush=True)
     else:
@@ -329,7 +331,7 @@ def error_assessment(args):
         minimap2_run = subprocess.run(["minimap2", "-cx", "asm20", "--eqx", "-t", str(args.threads), args.paternal, args.assembly1], check=True, stdout=f)
         f.close()
     
-    path = os.path.join(error_workdir, "asm1_m.paf")
+    path = os.path.join(error_workdir, asm1name, "asm1_m.paf")
     if os.path.isfile(path):
         print("Opening file from", path, flush=True)
     else:
@@ -338,7 +340,7 @@ def error_assessment(args):
         minimap2_run = subprocess.run(["minimap2", "-cx", "asm20", "--eqx", "-t", str(args.threads), args.maternal, args.assembly1], check=True, stdout=f)
         f.close()
     
-    path = os.path.join(error_workdir, "asm2_p.paf")
+    path = os.path.join(error_workdir, asm2name, "asm2_p.paf")
     if os.path.isfile(path):
         print("Opening file from", path, flush=True)
     else:
@@ -347,7 +349,7 @@ def error_assessment(args):
         minimap2_run = subprocess.run(["minimap2", "-cx", "asm20", "--eqx", "-t", str(args.threads), args.paternal, args.assembly2], check=True, stdout=f)
         f.close()
     
-    path = os.path.join(error_workdir, "asm2_m.paf")
+    path = os.path.join(error_workdir, asm2name, "asm2_m.paf")
     if os.path.isfile(path):
         print("Opening file from", path, flush=True)
     else:
@@ -356,28 +358,33 @@ def error_assessment(args):
         minimap2_run = subprocess.run(["minimap2", "-cx", "asm20", "--eqx", "-t", str(args.threads), args.maternal, args.assembly2], check=True, stdout=f)
         f.close()
         
-    evaluate_error(args.assembly1, os.path.join(error_workdir, "asm1_p.paf"), os.path.join(error_workdir, "asm1_m.paf"))
-    evaluate_error(args.assembly2, os.path.join(error_workdir, "asm2_p.paf"), os.path.join(error_workdir, "asm2_m.paf"))
+    evaluate_error(args.assembly1, os.path.join(error_workdir, asm1name, "asm1_p.paf"), os.path.join(error_workdir, asm1name, "asm1_m.paf"))
+    evaluate_error(args.assembly2, os.path.join(error_workdir, asm2name, "asm2_p.paf"), os.path.join(error_workdir, asm2name, "asm2_m.paf"))
     
 def haplotype_assessment():
     pass
     
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", type=str, help="the evaluation script to execute")
     parser.add_argument("-1", "--assembly1", type=str, help="First haplotype input")
     parser.add_argument("-2", "--assembly2", type=str, help="Second haplotype input")
+    parser.add_argument("-i", "--assemblies", type=str, help="Assembly txt file input")
     parser.add_argument("-p", "--paternal", type=str, help="First haplotype reference")
     parser.add_argument("-m", "--maternal", type=str, help="Second haplotype reference")
     parser.add_argument("-t", "--threads", type=int, help="Number of threads to run", default=1)
     parser.add_argument("-w", "--workdir", type=str, help="Number of threads to run", default="hypo_eval_wd")
     args = parser.parse_args()
     
-    if args.command == "diploid_error":
-        error_assessment(args)
-    else:
-        print("Command %s is unknown" % args.command)
+    if args.assemblies is None:
+        print("-i or --assemblies is needed for diploid error evaluation.")
         exit(1)
+        
+    f = open(args.assemblies)
+    for line in f:
+        a = line.strip().split()
+        args.assembly1 = a[0]
+        args.assembly2 = a[1]
+        error_assessment(args)
   
   
 if __name__ == '__main__':
