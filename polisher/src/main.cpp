@@ -48,6 +48,7 @@ static struct option long_options[] = {
     {"draft", required_argument, NULL, 'd'},
     {"size-ref", required_argument, NULL, 's'},
     {"coverage-short", required_argument, NULL, 'c'},
+    {"coverage-long", required_argument, NULL, 'C'},
     {"bam-sr", required_argument, NULL, 'b'},
     {"bam-lr", required_argument, NULL, 'B'},
     {"output", required_argument, NULL, 'o'},
@@ -64,6 +65,7 @@ static struct option long_options[] = {
     {"ned-th", required_argument, NULL, 'n'},
     {"intermed", no_argument, NULL, 'i'},
     {"help", no_argument, NULL, 'h'},
+    {"memory-limit", required_argument, NULL, 'L'},
     {NULL, 0, NULL, 0}};
 
 inline bool file_exists (const std::string& name) {
@@ -124,11 +126,12 @@ void decodeFlags(int argc, char *argv[], InputFlags &flags)
   bool is_bamsr = false;
   bool is_cov_long = false;
   bool is_lr = false;
+  bool is_memory_given = false;
   std::string given_sz;
   std::string cmd = "hypo ";
   std::string err_string = "";
   /* initialisation */
-  while ((opt = getopt_long(argc, argv, "r:d:s:c:b:B:o:t:p:k:m:x:g:M:X:G:q:n:ihC:", long_options,
+  while ((opt = getopt_long(argc, argv, "r:d:s:c:b:B:o:t:p:k:m:x:g:M:X:G:q:n:ihC:L:", long_options,
                             nullptr)) != -1)
   {
     switch (opt)
@@ -316,6 +319,15 @@ void decodeFlags(int argc, char *argv[], InputFlags &flags)
       flags.intermed=true;
       cmd += (" -i ");
       break;
+    case 'L':
+      if (atoi(optarg) <= 0) {
+        fprintf(stderr, "[Hypo::utils] Error: Arg Error: KMC memory (L) must be positive %d!\n",atoi(optarg));
+        exit(1);
+      }
+      is_memory_given = true;
+      flags.sz_in_gb = (UINT32)atoi(optarg);
+      cmd += (" -L " + std::string(optarg));
+      break;
     default:
       usage();
       exit(0);
@@ -328,7 +340,7 @@ void decodeFlags(int argc, char *argv[], InputFlags &flags)
     // Set window settings
     void set_kind(const std::string& kind);
     // Set expected short reads file size
-    flags.sz_in_gb = get_expected_file_sz(given_sz,flags.cov);
+    if(!is_memory_given) flags.sz_in_gb = get_expected_file_sz(given_sz,flags.cov);
 
     // Set output name
     if (flags.output_filename == "") {
