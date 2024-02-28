@@ -1,7 +1,7 @@
 import sys
 
-if len(sys.argv) < 4:
-    print("Usage:", sys.argv[0], "<pickled file>", "<long read alignments>", "<output prefix>")
+if len(sys.argv) < 5:
+    print("Usage:", sys.argv[0], "<pickled file>", "<long read alignments>", "<output prefix> <filter index>")
     exit(1)
 
 import pickle
@@ -17,13 +17,24 @@ from Bio.SeqRecord import SeqRecord
 
 aligns = pysam.AlignmentFile(sys.argv[2], "rb")
 
+filter_index = int(argv[5])
+
 final_sequences = []
 final_aux = []
 
 unmerged_contigs = set()
 
+count = 0
+
 for cn in overlap_positions:
     ctg1, ctg2, lu, rs, re1, re2, c1s, c1e, c2s, c2e, seq1, seq2 = overlap_positions[cn]
+    
+    if filter_index == 1 and count > len(overlap_positions) / 2:
+        break
+    if filter_index == 2 and count < len(overlap_positions) / 2:
+        continue
+        
+    count += 1
     
     cn1 = cn + "_1"
     cn2 = cn + "_2"
